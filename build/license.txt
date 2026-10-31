@@ -1,0 +1,44 @@
+MIT License
+
+Copyright (c) 2025 OpenHarness contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+----------------------------------------
+OpenHarness specific notices / Avertissements specifiques
+----------------------------------------
+
+EN — OpenHarness calls remote AI providers (Anthropic, OpenAI, or compatible
+endpoints). Your conversations and API keys are stored locally, but message
+content is sent to whichever provider you configure. Review that provider's
+privacy policy. Mission features may read — strictly read-only, and only inside
+folders you explicitly assign to a team — local files and forward them to the
+configured provider. Do not assign folders whose content must not leave your
+machine. No warranty of availability, accuracy, or fitness for a particular
+purpose is provided.
+
+FR — OpenHarness appelle des fournisseurs d'IA distants (Anthropic, OpenAI ou
+points de terminaison compatibles). Vos conversations et cles API sont
+stockees localement, mais le contenu des messages est envoye au fournisseur
+que vous configurez. Consultez la politique de confidentialite du fournisseur.
+Les fonctionnalites de mission peuvent lire, en lecture seule et exclusivement
+dans les dossiers que vous assignez explicitement a une equipe, des fichiers
+locaux pour les transmettre au fournisseur configure. N'assignez que des
+dossiers dont le contenu peut quitter votre machine. Aucune garantie de
+disponibilite, d'exactitude ou d'aptitude a un usage particulier n'est fournie.

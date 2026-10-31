@@ -1,0 +1,58 @@
+{
+  "name": "openharness",
+  "version": "0.1.0",
+  "private": true,
+  "description": "One Platform. Multiple AI Agents.",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"tsc -p tsconfig.electron.json --watch\" \"wait-on tcp:5173 file:dist-electron/main.js file:dist-electron/preload.js && electron .\"",
+    "build": "tsc -p tsconfig.electron.json && tsc -b && vite build",
+    "build:win": "npm run build && electron-builder --win nsis",
+    "build:linux": "npm run build && electron-builder --linux AppImage",
+    "test": "vitest run --exclude dist-electron/**",
+    "typecheck": "tsc -p tsconfig.electron.json && tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@getpapillon/papicons": "^0.2.3",
+    "better-sqlite3": "^11.8.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.13.4",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "electron": "^34.2.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "~5.7.3",
+    "vite": "^6.1.0",
+    "vitest": "^3.0.5",
+    "wait-on": "^8.0.2"
+  },
+  "build": {
+    "appId": "io.openharness.desktop",
+    "productName": "OpenHarness",
+    "directories": { "output": "release" },
+    "files": ["dist/**", "dist-electron/**", "package.json"],
+    "win": { "target": "nsis", "artifactName": "OpenHarness-Setup.${ext}", "icon": "build/icon/256.png" },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "selectPerMachineByDefault": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false,
+      "installerLanguages": ["fr_FR", "en_US"],
+      "displayLanguageSelector": true,
+      "license": "build/license.txt"
+    },
+    "linux": { "target": "AppImage", "artifactName": "OpenHarness.${ext}", "category": "Development", "icon": "build/icon/512.png" },
+    "mac": { "target": "dmg" }
+  }
+}

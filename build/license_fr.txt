@@ -1,0 +1,38 @@
+OpenHarness — Licence et conditions d'utilisation (FR)
+
+Ce programme est un logiciel libre : vous pouvez le redistribuer et/ou le
+modifier selon les termes de la licence MIT.
+
+Licence MIT — texte de référence (copyright réservé aux auteurs d'OpenHarness).
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Avertissements spécifiques :
+
+1. OpenHarness appelle des fournisseurs d'IA distants (Anthropic, OpenAI ou
+   points de terminaison compatibles). Vos conversations et clés API sont
+   stockées localement, mais le contenu des messages est envoyé au fournisseur
+   que vous configurez. Consultez la politique de confidentialité du fournisseur.
+2. Les fonctionnalités de mission peuvent lire, en lecture seule et
+   exclusivement dans les dossiers que vous assignez explicitement à une
+   équipe, des fichiers locaux pour les transmettre au fournisseur configuré.
+   N'assignez que des dossiers dont le contenu peut quitter votre machine.
+3. Aucune garantie de disponibilité, d'exactitude ou d'aptitude à un usage
+   particulier n'est fournie. N'utilisez pas OpenHarness pour des décisions
+   médicales, juridiques ou financières sans revue humaine.
