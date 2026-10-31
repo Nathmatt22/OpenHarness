@@ -407,9 +407,41 @@ textarea.field { resize: vertical; min-height: 90px; line-height: 1.55; }
 .notice.error { background: #f2727f14; border-color: #f2727f33; color: #f0a2ab; }
 .app.light .notice.error { color: #b4485a; }
 
+/* ── Team chat ─────────────────────────────────────────────────── */
+.team-chat-view { flex: 1; min-height: 0; overflow: hidden; display: flex; }
+.team-chat-layout {
+  flex: 1; min-height: 0; display: grid; gap: 28px;
+  grid-template-columns: 320px 1fr; padding: 28px 32px;
+}
+.team-chat-side { min-width: 0; overflow-y: auto; }
+.team-chat-side h1 { font: 600 26px var(--font-display); margin: 10px 0 10px; }
+.team-chat-side .lede { color: var(--text-2); font-size: 13.5px; line-height: 1.65; margin: 0 0 22px; max-width: 320px; }
+.tchat-roster { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.tchat-agent-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font: 500 11px var(--font-sans); color: var(--text-2);
+  background: var(--surface-2); border: 1px solid var(--line);
+  padding: 3px 9px; border-radius: 99px;
+}
+.tchat-tool-hint { font-size: 11.5px; color: var(--text-3); line-height: 1.55; margin: 14px 0 0; }
+.tchat-threads { margin-top: 20px; }
+.tchat-thread {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: transparent; border: 0; border-top: 1px solid var(--line);
+  color: var(--text-2); font: 500 12.5px var(--font-sans);
+  padding: 9px 2px; cursor: pointer; text-align: left;
+}
+.tchat-thread:hover { color: var(--text); background: var(--surface-2); }
+.tchat-thread.active { color: var(--accent); }
+.tchat-thread .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-chat-main { min-width: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); padding-left: 24px; }
+.team-chat-main .messages { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
+
 /* ── Responsive ────────────────────────────────────────────────── */
 @media (max-width: 1120px) {
-  .settings-grid, .team-layout { grid-template-columns: 1fr; gap: 24px; }
+  .settings-grid, .team-layout, .team-chat-layout { grid-template-columns: 1fr; gap: 24px; }
   .team-layout { padding: 28px 24px; }
+  .team-chat-view { overflow-y: auto; }
+  .team-chat-main { border-left: 0; padding-left: 0; min-height: 420px; }
   .message-row, .composer-wrap { padding-left: 20px; padding-right: 20px; }
 }

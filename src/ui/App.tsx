@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Sidebar, Topbar, ChatView } from './components';
 import { SettingsPage } from './Settings';
 import { TeamView } from './TeamView';
+import { TeamChatView } from './TeamChatView';
 import { useAppData, useLang, useRealtime, useTheme, type Page } from './hooks';
 import { api, type Agent, type ChatMessage, type Connection } from './types';
 
@@ -10,12 +11,15 @@ export default function App() {
   const { light, toggle } = useTheme();
   const { lang, setLang, t } = useLang(data);
   const [page, setPage] = useState<Page>('chat');
-  const [mode, setMode] = useState<'solo' | 'team'>('solo');
+  const [mode, setMode] = useState<'solo' | 'team' | 'teamchat'>('solo');
   const [agentId, setAgentId] = useState('');
   const [conversationId, setConversationId] = useState('');
+  const [teamConvId, setTeamConvId] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [text, setText] = useState('');
   const [streaming, setStreaming] = useState('');
+  const [streamAgent, setStreamAgent] = useState('');
+  const [teamBusy, setTeamBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -24,12 +28,13 @@ export default function App() {
   // Latest active ids in refs so event handlers never read stale closures.
   const activeConversation = useRef('');
   const streamingRef = useRef('');
-  activeConversation.current = conversationId;
-  const appendStream = (delta: string) => {
+  activeConversation.current = mode === 'teamchat' ? teamConvId : conversationId;
+  const appendStream = (delta: string, agentId?: string) => {
     streamingRef.current += delta;
     setStreaming(streamingRef.current);
+    setStreamAgent(agentId ?? '');
   };
-  const resetStream = () => { streamingRef.current = ''; setStreaming(''); };
+  const resetStream = () => { streamingRef.current = ''; setStreaming(''); setStreamAgent(''); };
 
   const currentAgent: Agent | undefined = useMemo(
     () => data.agents.find((a: Agent) => a.id === agentId) ?? data.agents[0],
@@ -39,10 +44,14 @@ export default function App() {
     () => data.connections.find((c: Connection) => c.id === connectionId) ?? data.connections[0],
     [data.connections, connectionId]
   );
+  const teamConversations = useMemo(
+    () => (data.conversations as any[]).filter((c) => c.team_id),
+    [data.conversations]
+  );
 
   const realtime = useRealtime(
-    (d) => { if (d.streamId === activeConversation.current) appendStream(d.delta); },
-    (e) => { if (e.id === activeConversation.current) { setBusy(false); setError(e.error); resetStream(); } }
+    (d) => { if (d.streamId === activeConversation.current) appendStream(d.delta, d.agentId); },
+    (e) => { if (e.id === activeConversation.current) { setBusy(false); setTeamBusy(false); setError(e.error); resetStream(); } }
   );
 
   useEffect(() => {
@@ -56,14 +65,21 @@ export default function App() {
 
   useEffect(() => {
     if (page !== 'chat') return;
-    if (mode === 'team') { setError(''); return; }
+    if (mode !== 'solo') { setError(''); return; }
     if (!conversationId && messages.length) { setMessages([]); setStreaming(''); }
   }, [page, mode, conversationId, messages.length]);
 
+  const activateTeamConv = (id: string) => {
+    activeConversation.current = id;
+    setTeamConvId(id);
+    resetStream();
+  };
+
   const openConversation = async (id: string) => {
+    const conv = data.conversations.find((c: any) => c.id === id);
+    if (conv?.team_id) { setMode('teamchat'); setPage('chat'); activateTeamConv(id); return; }
     setPage('chat'); setMode('solo');
     setConversationId(id); resetStream(); setError('');
-    const conv = data.conversations.find((c: any) => c.id === id);
     if (conv) setAgentId(conv.agent_id);
     setMessages(await api()('conversation:messages', { id }));
   };
@@ -107,9 +123,29 @@ export default function App() {
     try { await api()('chat:stop', { id }); } catch { /* aborted */ }
   };
 
+  /** Team chat: the thread view creates the conversation, App runs the turn. */
+  const sendTeam = async (convId: string, content: string, mention: string | null) => {
+    setError('');
+    activeConversation.current = convId;
+    resetStream(); setTeamBusy(true);
+    try {
+      await api()('teamchat:send', { conversationId: convId, content, mention });
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setTeamBusy(false); resetStream();
+    }
+  };
+
+  const stopTeam = async () => {
+    if (!teamConvId) return;
+    try { await api()('teamchat:stop', { id: teamConvId }); } catch { /* aborted */ }
+  };
+
   const deleteConversation = async (id: string) => {
     await api()('conversation:delete', { id });
     if (conversationId === id) { setConversationId(''); setMessages([]); }
+    if (teamConvId === id) activateTeamConv('');
     await refresh();
   };
 
@@ -131,13 +167,13 @@ export default function App() {
         onNewChat={newChat}
         onOpenConversation={openConversation}
         onDeleteConversation={deleteConversation}
-        onMode={(m) => { setMode(m); setPage(m === 'team' ? 'team' : 'chat'); }}
+        onMode={(m) => { setMode(m); setPage(m === 'team' ? 'team' : 'chat'); if (m === 'teamchat') { activeConversation.current = teamConvId; resetStream(); } }}
         onPage={(p) => setPage(p)}
         onThemeToggle={toggle}
       />
 
       <main className="main">
-        <Topbar agent={currentAgent} connection={currentConnection} page={page} t={t} />
+        <Topbar agent={currentAgent} connection={currentConnection} page={page} mode={mode} t={t} />
 
         {loadError && (
           <div style={{ padding: 20 }}>
@@ -158,6 +194,25 @@ export default function App() {
             setEvents={realtime.setEvents}
             missionDone={realtime.missionDone}
             missionId={realtime.missionId}
+            t={t}
+          />
+        )}
+
+        {page === 'chat' && mode === 'teamchat' && (
+          <TeamChatView
+            teams={data.teams}
+            agents={data.agents}
+            teamConversations={teamConversations}
+            activeId={teamConvId}
+            onActive={activateTeamConv}
+            onStarted={refresh}
+            streaming={streaming}
+            streamingAgent={streamAgent}
+            busy={teamBusy}
+            error={error}
+            onClearError={() => setError('')}
+            onSend={sendTeam}
+            onStop={stopTeam}
             t={t}
           />
         )}
@@ -186,3 +241,4 @@ export default function App() {
     </div>
   );
 }
+

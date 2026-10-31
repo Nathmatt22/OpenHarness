@@ -26,6 +26,14 @@
 - Fixed the assistant answer appearing twice: the accumulated stream was never cleared and was rendered on top of the persisted message. The in-flight answer is now a single bubble that grows during streaming, then becomes the persisted message.
 - Stream handling moved to refs so event handlers always target the active conversation; the realtime subscription is established once instead of on every conversation switch.
 
+## 0.3.1 - Team chat
+
+- New shared team conversation: every agent of the roster answers in the same persisted thread, in order, each one seeing what the user and the previous agents said. The thread streams live in the interface, each bubble carries the name and icon of the agent that produced it, and the mention selector targets one agent instead of the whole team.
+- Team threads appear in the sidebar history (distinct icon) and reopen with their full content. Team conversations are real rows in the database (`conversations.team_id`, `messages.agent_id`); the solo chat flow is untouched.
+- Agents keep their folder capabilities during the chat: `READ`, `WRITE`, `MKDIR`, `DELETE` and `RUN`/`RUN_WAIT` are executed by the main process within the same rules as missions, and the internal tool-result messages are stored for the model but hidden from the thread.
+- The turn engine (`runAgentTurn`) and the workspace instructions (`buildWorkspaceContext`) are now shared between missions and team chat; missions keep their own sequential hand-off view.
+- Tests: team chat E2E suite (roster order, shared history, attribution of each bubble, READ cycle during a chat, refusal of `teamchat:send` on a solo conversation).
+
 ## 0.3.0 - Team workspace write access and application launching
 
 - Folders assigned to a team can now be marked "Écriture" in Settings → Équipes; flagged entries are stored as `path [WRITABLE]` and decoded by `shared/workspace-flags.ts` (single source of truth for main process and renderer).

@@ -1,7 +1,7 @@
 export interface Agent { id: string; name: string; description: string; instructions: string; icon: string; tools: string; custom: number; }
 export interface Connection { id: string; name: string; type: string; base_url: string; model: string; created_at: string; }
-export interface Conversation { id: string; title: string; agent_id: string; connection_id: string | null; created_at: string; }
-export interface ChatMessage { id: string; role: string; content: string; }
+export interface Conversation { id: string; title: string; agent_id: string; connection_id: string | null; team_id?: string | null; created_at: string; }
+export interface ChatMessage { id: string; role: string; content: string; agent_id?: string | null; created_at?: string; }
 export interface Team { id: string; name: string; agent_ids: string; folders: string | null; allow_run?: number; created_at: string; }
 export interface WorkspaceEntry { name: string; type: 'file' | 'folder'; size?: number; }
 export interface WorkspaceListing { folder: string; entries: WorkspaceEntry[]; }
@@ -41,6 +41,11 @@ export interface Invoke {
   (channel: 'workspace:delete', data: { teamId: string; relative: string }): Promise<string>;
   (channel: 'workspace:mkdir', data: { teamId: string; relative: string }): Promise<string>;
   (channel: 'workspace:run', data: { teamId: string; command: string; wait?: boolean; cwd?: string }): Promise<string>;
+  (channel: 'teamchat:create', data: { teamId: string; title?: string }): Promise<{ id: string }>;
+  (channel: 'teamchat:list'): Promise<Conversation[]>;
+  (channel: 'teamchat:messages', data: { id: string }): Promise<ChatMessage[]>;
+  (channel: 'teamchat:send', data: { conversationId: string; content: string; mention?: string | null }): Promise<{ content: string }>;
+  (channel: 'teamchat:stop', data: { id: string }): Promise<boolean>;
   (channel: 'mission:start', data: { teamId: string; task: string }): Promise<{ id: string; result: string }>;
   (channel: 'mission:stop', data: { id: string }): Promise<boolean>;
   (channel: 'mission:events', data: { id: string }): Promise<MissionEvent[]>;

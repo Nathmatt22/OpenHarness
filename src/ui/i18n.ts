@@ -7,6 +7,7 @@ const fr: Dict = {
   'side.newChat': 'Nouvelle conversation',
   'side.solo': 'Individuel',
   'side.team': 'Équipe',
+  'side.teamChat': 'Tchat d’équipe',
   'side.agents': 'Agents',
   'side.history': 'Historique',
   'side.noConversations': 'Aucune conversation',
@@ -54,6 +55,15 @@ const fr: Dict = {
   'team.activity': 'Activité de l’équipe',
   'team.timelineEmpty': 'Les échanges de la mission apparaîtront ici, en temps réel.',
   'team.orchestrator': 'Orchestrateur',
+
+  // Team chat
+  'tchat.title': 'Tchat d’équipe',
+  'tchat.lede': 'Une conversation partagée : chaque agent répond dans le fil, avec l’historique et les dossiers de l’équipe.',
+  'tchat.placeholder': 'Écrire à l’équipe…',
+  'tchat.mention': 'Destinataire',
+  'tchat.everyone': 'Toute l’équipe',
+  'tchat.noTeams': 'Créez une équipe dans Paramètres pour discuter à plusieurs.',
+  'tchat.toolHint': 'Les agents peuvent lire et agir sur les dossiers de l’équipe (READ / WRITE / RUN) pendant la discussion.',
 
   // Settings
   'set.title': 'Paramètres',
@@ -116,6 +126,7 @@ const en: Dict = {
   'side.newChat': 'New conversation',
   'side.solo': 'Individual',
   'side.team': 'Team',
+  'side.teamChat': 'Team chat',
   'side.agents': 'Agents',
   'side.history': 'History',
   'side.noConversations': 'No conversations yet',
@@ -161,6 +172,15 @@ const en: Dict = {
   'team.activity': 'Team activity',
   'team.timelineEmpty': 'Mission exchanges will appear here, in real time.',
   'team.orchestrator': 'Orchestrator',
+
+  // Team chat
+  'tchat.title': 'Team chat',
+  'tchat.lede': 'One shared thread: every agent answers in it, with the team history and folders.',
+  'tchat.placeholder': 'Write to the team…',
+  'tchat.mention': 'Recipient',
+  'tchat.everyone': 'Whole team',
+  'tchat.noTeams': 'Create a team in Settings to chat with several agents.',
+  'tchat.toolHint': 'Agents can read and act on the team folders (READ / WRITE / RUN) while chatting.',
 
   'set.title': 'Settings',
   'set.lede': 'Provider connections, teams and custom agents.',

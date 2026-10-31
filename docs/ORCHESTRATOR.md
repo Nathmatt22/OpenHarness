@@ -8,6 +8,10 @@ When a team has folders assigned (Settings → Équipes), the main process build
 
 Resolution is confined by construction: requests must be relative, `..` and absolute paths are refused, and each candidate is resolved to its real path (symlinks included) then verified to sit inside one of the assigned folders — write targets are anchored on their deepest existing ancestor so a symlinked parent cannot smuggle a path out. RUN programs must be a bare name resolved on the PATH or a path inside the assigned folders; arguments that look like out-of-root paths are refused; there is no shell interpolation (only `.bat`/`.cmd` run through cmd.exe). Refusals are reported to the agent as tagged text instead of leaking content. See `electron/workspace.ts`, `shared/workspace-flags.ts` and their tests, plus the end-to-end mission tests with a scripted SSE provider.
 
+## Team chat
+
+Team chat (`teamchat:*` channels, `src/ui/TeamChatView.tsx`) is a persistent shared conversation attached to a team (`conversations.team_id`): the user's message is stored once, then each roster agent runs a turn against the same history (`messages.agent_id` attributes every answer). The mention selector reorders the roster to answer first. The turn engine (`runAgentTurn`) and the workspace instructions (`buildWorkspaceContext`) are the same ones missions use, so folder capabilities behave identically; the internal tool-result messages are persisted for the model but filtered out of the rendered thread. One generation runs at a time per team conversation (`teamchat:stop` aborts it).
+
 ## Scope
 
 The current scheduler is sequential and bounded by team size. It does not autonomously plan subtask dependencies or execute file changes (file access is read-only, within assigned folders only). Cancellation and mission stop are exposed, though the current renderer's stop control needs the active mission ID wired before relying on it; use this workflow with that limitation in mind.

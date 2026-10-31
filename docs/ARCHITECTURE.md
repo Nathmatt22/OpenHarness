@@ -2,7 +2,7 @@
 
 - `src/ui`: React renderer; no Node integration.
 - `electron/preload.ts`: narrow, channel-allowlisted context bridge.
-- `electron/main.ts`: IPC handlers, provider orchestration, streaming and mission events.
+- `electron/main.ts`: IPC handlers, provider orchestration, streaming, mission events and the shared agent-turn engine (solo chat, missions, team chat).
 - `electron/providers.ts`: Anthropic Messages and OpenAI-compatible Chat Completions adapters.
 - `electron/workspace.ts`: path-confined access to the folders assigned to a team (listing, file reads, WRITE/DELETE/MKDIR on writable folders, application launching gated by the team toggle, action-marker parsing).
 - `electron/database.ts`: SQLite in the OS user-data directory (including the `settings` key/value table used for preferences such as the UI language).

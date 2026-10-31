@@ -28,5 +28,11 @@ function migrate(database: Database.Database) {
   if (!columns('teams').some((c) => c.name === 'allow_run')) {
     database.exec('ALTER TABLE teams ADD COLUMN allow_run INTEGER DEFAULT 0');
   }
+  if (!columns('conversations').some((c) => c.name === 'team_id')) {
+    database.exec('ALTER TABLE conversations ADD COLUMN team_id TEXT');
+  }
+  if (!columns('messages').some((c) => c.name === 'agent_id')) {
+    database.exec('ALTER TABLE messages ADD COLUMN agent_id TEXT');
+  }
 }
 export function database() { if (!db) throw new Error('Database not initialized'); return db; }

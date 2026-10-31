@@ -7,7 +7,7 @@ import { streamChat, testProvider, providerEndpoint, type ProviderInput, type Ch
 import {
   listWorkspace, readWorkspaceFile, writeWorkspaceFile, deleteWorkspaceEntry, mkdirWorkspace,
   parseWorkspaceRequests, parseFolderFlags, performWorkspaceAction, runApplication, isPolicy,
-  type ParsedRequest
+  type ParsedRequest, type WorkspaceFolders
 } from './workspace';
 
 let win: BrowserWindow;
@@ -21,6 +21,7 @@ const allowed = new Set([
   'agent:save', 'agent:delete',
   'team:save', 'team:delete', 'team:pickFolder', 'workspace:list', 'workspace:read',
   'workspace:write', 'workspace:delete', 'workspace:mkdir', 'workspace:run',
+  'teamchat:create', 'teamchat:list', 'teamchat:messages', 'teamchat:send', 'teamchat:stop',
   'mission:start', 'mission:stop', 'mission:events'
 ]);
 const isString = (v: unknown): v is string => typeof v === 'string';
@@ -54,6 +55,9 @@ function agent(id: string) {
   return database().prepare('SELECT * FROM agents WHERE id=?').get(id) as any;
 }
 
+/** Alias used by the team-chat paths. */
+const agentRow = agent;
+
 /** Folders stored on the team row; `[]` when the team has none or is unknown. */
 function teamFolders(teamId: string): string[] {
   const team = database().prepare('SELECT folders FROM teams WHERE id=?').get(teamId) as any;
@@ -71,9 +75,107 @@ function teamAllowRun(teamId: string): boolean {
   return team?.allow_run === 1;
 }
 
+/** Decoded workspace capabilities (folders, writable subset, run switch) for a team. */
+function teamCapabilities(teamId: string): WorkspaceFolders {
+  const { folders, writable } = teamWorkspace(teamId);
+  return { folders, writable, allowRun: teamAllowRun(teamId) };
+}
+
+/**
+ * Workspace intro for the first message of a team conversation: per-folder
+ * capability flags plus the action-marker how-to. Empty when the team has no
+ * folder assigned.
+ */
+function buildWorkspaceContext(ws: WorkspaceFolders): string {
+  if (!ws.folders.length) return '';
+  let workspaceContext = '';
+  try {
+    const listing = listWorkspace(ws.folders);
+    workspaceContext = '\n\nDossiers assignés à l’équipe :\n' + listing.map((l) =>
+      `${ws.writable.has(l.folder) ? '[écriture autorisée]' : '[lecture seule]'} ${l.folder} → ${l.entries.map((e) => e.name).join(', ') || '(vide)'}`).join('\n');
+  } catch (e) {
+    if (!isPolicy(e)) throw e;
+    workspaceContext = `\n\nDossiers assignés illisibles : ${e.message}`;
+  }
+  const capabilities = [
+    'Pour lire un fichier, écris une ligne complète "READ: chemin/relatif.ext".'
+  ];
+  if (ws.writable.size) {
+    capabilities.push(
+      'Dans les dossiers marqués [écriture autorisée], tu peux aussi demander, sur une seule ligne :',
+      '- "WRITE: chemin/relatif.ext | contenu complet du fichier" (crée ou remplace le fichier, 512 Ko max) ;',
+      '- "MKDIR: sous/dossier" ;',
+      '- "DELETE: chemin/relatif" (fichier ou dossier vide).'
+    );
+  } else {
+    capabilities.push('Ces dossiers sont en lecture seule : aucune écriture n’est possible.');
+  }
+  if (ws.allowRun) {
+    capabilities.push(
+      'Tu peux lancer des applications installées par leur nom, ou par un chemin dans les dossiers assignés :',
+      '- "RUN: programme argument1 argument2" pour lancer sans attendre (aperçu de sortie limité) ;',
+      '- "RUN_WAIT: programme arguments | sous/dossier" pour attendre la fin et obtenir le code de sortie (120 s max) ; le segment après | est le dossier de travail.',
+      'N’invente jamais une exécution : si tu n’as pas réellement lancé de commande, dis-le.'
+    );
+  }
+  return workspaceContext + '\n\nActions disponibles :\n' + capabilities.map((c) => `- ${c}`).join('\n');
+}
+
+/** Fallback connection id: the oldest configured connection. */
+function firstConnectionId(): string | undefined {
+  return (database().prepare('SELECT id FROM connections ORDER BY created_at LIMIT 1').get() as any)?.id;
+}
+
+/**
+ * Store one message; team messages carry the speaking agent's id in the
+ * agent_id column so the renderer can attribute every bubble.
+ */
+function saveTeamMessage(conversationId: string, role: string, content: string, agentId?: string) {
+  database().prepare('INSERT INTO messages(id,conversation_id,role,content,created_at,agent_id) VALUES(?,?,?,?,?,?)')
+    .run(randomUUID(), conversationId, role, content, new Date().toISOString(), agentId ?? null);
+}
+
+/**
+ * Run one participant turn: stream the answer (emitting chat:delta), persist
+ * it, execute any workspace action markers and feed the tagged results back,
+ * then return the final text.
+ */
+async function runAgentTurn(
+  conversationId: string,
+  instructions: string,
+  ws: WorkspaceFolders,
+  signal: AbortSignal,
+  opts?: { agentId?: string; maxRounds?: number }
+): Promise<string> {
+  const maxRounds = opts?.maxRounds ?? 3;
+  let content = '';
+  const budget = { writeBytes: 0 };
+  for (let round = 1; round <= maxRounds; round += 1) {
+    const conversation = database().prepare('SELECT * FROM conversations WHERE id=?').get(conversationId) as any;
+    const provider = providerFor(conversation?.connection_id || firstConnectionId());
+    const history = database().prepare('SELECT role,content FROM messages WHERE conversation_id=? ORDER BY created_at')
+      .all(conversationId) as ChatMessage[];
+    content = '';
+    for await (const delta of streamChat(provider, [{ role: 'system', content: instructions }, ...history], signal)) {
+      content += delta;
+      emit('chat:delta', { id: conversationId, streamId: conversationId, delta, agentId: opts?.agentId });
+    }
+    saveTeamMessage(conversationId, 'assistant', content, opts?.agentId);
+    const requests = parseWorkspaceRequests(content);
+    if (!requests.length || round >= maxRounds) return content;
+    const results: string[] = [];
+    for (const request of requests) {
+      results.push(await performWorkspaceAction(ws, request, budget));
+    }
+    saveTeamMessage(conversationId, 'user',
+      `Résultats des actions demandées (dossiers assignés) :\n${results.join('\n\n')}\n\n` +
+      'Continue à partir de ces résultats. Ces lignes outil ne sont pas des réponses de l’utilisateur.');
+  }
+  return content;
+}
+
 function saveMessage(conversationId: string, role: string, content: string) {
-  database().prepare('INSERT INTO messages VALUES(?,?,?,?,?)')
-    .run(randomUUID(), conversationId, role, content, new Date().toISOString());
+  saveTeamMessage(conversationId, role, content);
 }
 
 async function answer(conversationId: string, agentId: string, streamKey: string) {
@@ -135,7 +237,7 @@ app.whenReady().then(() => {
   register('app:init', () => ({
     agents: d.prepare('SELECT * FROM agents ORDER BY custom,name').all(),
     connections: d.prepare('SELECT id,name,type,base_url,model,created_at FROM connections ORDER BY created_at').all(),
-    conversations: d.prepare('SELECT * FROM conversations ORDER BY created_at DESC').all(),
+    conversations: d.prepare('SELECT id,title,agent_id,connection_id,team_id,created_at FROM conversations ORDER BY created_at DESC').all(),
     teams: d.prepare('SELECT id,name,agent_ids,folders,allow_run,created_at FROM teams ORDER BY created_at DESC').all(),
     settings: Object.fromEntries(d.prepare('SELECT key,value FROM settings').all().map((r: any) => [r.key, r.value])) as Record<string, string>,
     endpoints: providerEndpoint('claude') && providerEndpoint('openai')
@@ -310,12 +412,72 @@ app.whenReady().then(() => {
     return result.summary;
   });
 
+  register('teamchat:create', (p: any) => {
+    const team = d.prepare('SELECT id,name FROM teams WHERE id=?').get(p?.teamId) as any;
+    if (!team) fail('Équipe inconnue.');
+    const id = randomUUID();
+    d.prepare('INSERT INTO conversations(id,title,agent_id,connection_id,team_id,created_at) VALUES(?,?,?,?,?,?)')
+      .run(id, isString(p?.title) && p.title.trim() ? p.title.trim() : team.name, null, null, p.teamId, new Date().toISOString());
+    return { id };
+  });
+
+  register('teamchat:list', () =>
+    d.prepare('SELECT * FROM conversations WHERE team_id IS NOT NULL ORDER BY created_at DESC').all());
+
+  register('teamchat:messages', (p: any) => {
+    const conversation = d.prepare('SELECT team_id FROM conversations WHERE id=?').get(p?.id) as any;
+    if (!conversation?.team_id) fail('Conversation d’équipe introuvable.');
+    return d.prepare('SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at').all(p.id);
+  });
+
+  register('teamchat:send', async (p: any) => {
+    if (!isString(p?.content) || !p.content.trim() || p.content.length > 50000) fail('Message invalide.');
+    const conversation = d.prepare('SELECT * FROM conversations WHERE id=?').get(p.conversationId) as any;
+    if (!conversation?.team_id) fail('Conversation d’équipe introuvable.');
+    const team = d.prepare('SELECT * FROM teams WHERE id=?').get(conversation.team_id) as any;
+    const roster: string[] = team?.agent_ids ? JSON.parse(team.agent_ids) : [];
+    if (!roster.length) fail('Cette équipe est vide.');
+    const ws = teamCapabilities(conversation.team_id);
+    const active = controllers.get(p.conversationId);
+    if (active) active.abort(); // one generation at a time per team conversation
+    const signal = new AbortController();
+    controllers.set(p.conversationId, signal);
+    const mention = isString(p?.mention) && roster.includes(p.mention) ? p.mention : null;
+    // Workspace intro rides with the very first user message of the conversation.
+    const fresh = !d.prepare('SELECT id FROM messages WHERE conversation_id=?').get(p.conversationId);
+    try {
+      if (fresh && ws.folders.length) {
+        saveTeamMessage(p.conversationId, 'user',
+          `${p.content.trim()}\n${buildWorkspaceContext(ws)}\n\nPour obtenir le contenu d'un fichier ou exécuter une action, utilise les lignes actions décrites ci-dessus dans ta réponse.`);
+      } else {
+        saveTeamMessage(p.conversationId, 'user',
+          `L'utilisateur écrit à l’équipe : ${p.content.trim()}\n` +
+          `Réponds directement, en une réponse courte et actionnable. Ne répète pas les réponses des autres agents.`);
+      }
+      const order = mention ? [mention, ...roster.filter((a) => a !== mention)] : roster;
+      for (const agentId of order) {
+        const a = agentRow(agentId);
+        if (!a) continue;
+        await runAgentTurn(p.conversationId, a.instructions, ws, signal.signal, { agentId });
+      }
+      const answers = d.prepare('SELECT content FROM messages WHERE conversation_id=? AND role=? ORDER BY created_at')
+        .all(p.conversationId, 'assistant') as { content: string }[];
+      return { content: answers.at(-1)?.content ?? '' };
+    } catch (e) {
+      emit('chat:error', { id: p.conversationId, error: String(e instanceof Error ? e.message : e) });
+      throw e;
+    } finally {
+      controllers.delete(p.conversationId);
+    }
+  });
+
+  register('teamchat:stop', (p: any) => { controllers.get(p?.id)?.abort(); return true; });
+
   register('mission:start', async (p: any) => {
     const team = d.prepare('SELECT * FROM teams WHERE id=?').get(p.teamId) as any;
     if (!team || !isString(p?.task) || !p.task.trim()) fail('Équipe ou mission manquante.');
     const ids = JSON.parse(team.agent_ids) as string[];
     if (!ids.length) fail('L’équipe est vide.');
-    const folders: string[] = team.folders ? JSON.parse(team.folders) : [];
     const id = randomUUID();
     controllers.set(id, new AbortController());
     emit('mission:started', { missionId: id });
@@ -328,78 +490,14 @@ app.whenReady().then(() => {
 
     // Workspace capabilities for this mission: plain folders are readable,
     // entries flagged [WRITABLE] add write support, allow_run gates RUN.
-    const { folders: wsFolders, writable } = parseFolderFlags(folders);
-    const allowRun = team.allow_run === 1;
-    const ws = { folders: wsFolders, writable, allowRun };
-
-    let workspaceContext = '';
-    if (wsFolders.length) {
-      try {
-        const listing = listWorkspace(wsFolders);
-        workspaceContext = '\n\nDossiers assignés à l’équipe :\n' + listing.map((l) =>
-          `${writable.has(l.folder) ? '[écriture autorisée]' : '[lecture seule]'} ${l.folder} → ${l.entries.map((e) => e.name).join(', ') || '(vide)'}`).join('\n');
-      } catch (e) {
-        if (!isPolicy(e)) throw e;
-        workspaceContext = `\n\nDossiers assignés illisibles : ${e.message}`;
-      }
-      const capabilities = [
-        'Pour lire un fichier, écris une ligne complète "READ: chemin/relatif.ext".'
-      ];
-      if (writable.size) {
-        capabilities.push(
-          'Dans les dossiers marqués [écriture autorisée], tu peux aussi demander, sur une seule ligne :',
-          '- "WRITE: chemin/relatif.ext | contenu complet du fichier" (crée ou remplace le fichier, 512 Ko max) ;',
-          '- "MKDIR: sous/dossier" ;',
-          '- "DELETE: chemin/relatif" (fichier ou dossier vide).'
-        );
-      } else {
-        capabilities.push('Ces dossiers sont en lecture seule : aucune écriture n’est possible.');
-      }
-      if (allowRun) {
-        capabilities.push(
-          'Tu peux lancer des applications installées par leur nom, ou par un chemin dans les dossiers assignés :',
-          '- "RUN: programme argument1 argument2" pour lancer sans attendre (aperçu de sortie limité) ;',
-          '- "RUN_WAIT: programme arguments | sous/dossier" pour attendre la fin et obtenir le code de sortie (120 s max) ; le segment après | est le dossier de travail.',
-          'N’invente jamais une exécution : si tu n’as pas réellement lancé de commande, dis-le.'
-        );
-      }
-      workspaceContext += '\n\nActions disponibles :\n' + capabilities.map((c) => `- ${c}`).join('\n');
-    }
+    const ws = teamCapabilities(p.teamId);
+    const workspaceContext = buildWorkspaceContext(ws);
 
     // Tool loop: the model signals actions with full-line markers (READ/WRITE/
     // DELETE/MKDIR/RUN/RUN_WAIT), the main process executes them inside the
     // assigned folders and feeds the tagged results back within the same turn.
-    const runAgentTurn = async (conversationId: string, instructions: string): Promise<string> => {
-      let content = '';
-      let round = 0;
-      const budget = { writeBytes: 0 };
-      while (round < 3) {
-        round += 1;
-        const conversation = d.prepare('SELECT * FROM conversations WHERE id=?').get(conversationId) as any;
-        const provider = providerFor(conversation?.connection_id
-          || (d.prepare('SELECT id FROM connections ORDER BY created_at LIMIT 1').get() as any)?.id);
-        const history = d.prepare('SELECT role,content FROM messages WHERE conversation_id=? ORDER BY created_at')
-          .all(conversationId) as ChatMessage[];
-        const signal = controllers.get(id)?.signal;
-        if (!signal) fail('Mission annulée.');
-        content = '';
-        for await (const delta of streamChat(provider, [{ role: 'system', content: instructions }, ...history], signal)) {
-          content += delta;
-          emit('chat:delta', { id: conversationId, streamId: conversationId, delta });
-        }
-        saveMessage(conversationId, 'assistant', content);
-        const requests = parseWorkspaceRequests(content);
-        if (!requests.length || round >= 3) return content;
-        const results: string[] = [];
-        for (const request of requests) {
-          results.push(await performWorkspaceAction(ws, request, budget));
-        }
-        saveMessage(conversationId, 'user',
-          `Résultats des actions demandées (dossiers assignés) :\n${results.join('\n\n')}\n\n` +
-          'Continue à partir de ces résultats. Ces lignes outil ne sont pas des réponses de l’utilisateur.');
-      }
-      return content;
-    };
+    const runMissionTurn = async (conversationId: string, instructions: string, agentId: string): Promise<string> =>
+      runAgentTurn(conversationId, instructions, ws, controllers.get(id)!.signal, { agentId });
 
     let context = `Mission: ${p.task.trim()}`;
     try {
@@ -414,7 +512,7 @@ app.whenReady().then(() => {
         saveMessage(conv, 'user',
           `Mission globale: ${p.task}\n\nContexte et résultats des agents précédents:\n${context}` +
           (workspaceContext ? `\n${workspaceContext}\n\nPour obtenir le contenu d'un fichier ou exécuter une action, utilise les lignes actions décrites ci-dessus dans ta réponse.` : ''));
-        const result = await runAgentTurn(conv, a.instructions);
+        const result = await runMissionTurn(conv, a.instructions, a.id);
         context += `\n\n${a.name}: ${result}`;
         record(a.id, result);
       }
