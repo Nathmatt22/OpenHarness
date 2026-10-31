@@ -2,7 +2,21 @@ import { useEffect, useRef, useState } from 'react';
 import { PapIcon } from './icons';
 import { Agent, ChatMessage, Conversation, Team, api } from './types';
 import { parseFolderFlags } from '../../shared/workspace-flags';
+import type { Activity } from './hooks';
 import type { TFunction } from './i18n';
+
+/** One live activity badge: pulsing dot + localized label. */
+export function ActivityBadge({ activity, agent, t } : { activity: Activity; agent?: Agent; t: TFunction }) {
+  return (
+    <span className={`activity-badge ${activity}`}>
+      <span className="pulse" />
+      {agent && <PapIcon name={agent.icon || 'sparkles'} size={11} />}
+      <span className="label">
+        {t(`act.${activity}`, { agent: agent?.name ?? '' })}
+      </span>
+    </span>
+  );
+}
 
 /**
  * Live team conversation: one shared thread where every roster agent answers
@@ -10,12 +24,14 @@ import type { TFunction } from './i18n';
  * in-flight answers stream in like solo chat (the App-level chat:delta
  * subscription feeds the streaming text for the active conversation).
  */
-export function TeamChatView({ teams, agents, teamConversations, activeId, onActive, onStarted, onSend, onStop, streaming, streamingAgent, busy, error, onClearError, t } : {
+export function TeamChatView({ teams, agents, teamConversations, activeId, onActive, onStarted, onSend, onStop, streaming, streamingAgent, busy, activity, error, onClearError, t } : {
   teams: Team[]; agents: Agent[]; teamConversations: Conversation[];
   activeId: string; onActive: (id: string) => void; onStarted: () => void;
   onSend: (convId: string, content: string, mention: string | null) => Promise<void>;
   onStop: () => void;
-  streaming: string; streamingAgent?: string; busy: boolean; error: string; onClearError: () => void; t: TFunction;
+  streaming: string; streamingAgent?: string; busy: boolean;
+  activity?: { agentId?: string; activity: Activity };
+  error: string; onClearError: () => void; t: TFunction;
 }) {
   const [teamId, setTeamId] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -168,10 +184,21 @@ export function TeamChatView({ teams, agents, teamConversations, activeId, onAct
                   <article className="message assistant">
                     <div className="avatar"><PapIcon name={agentBy(streamingAgent)?.icon || 'sparkles'} size={14} /></div>
                     <div className="message-body">
-                      <div className="message-author">{agentBy(streamingAgent)?.name || t('team.orchestrator')}</div>
+                      <div className="message-author">
+                        {agentBy(streamingAgent)?.name || t('team.orchestrator')}
+                        {activity && <ActivityBadge activity={activity.activity} agent={agentBy(activity.agentId)} t={t} />}
+                      </div>
                       <p className="message-text">{streaming}</p>
                     </div>
                   </article>
+                )}
+                {busy && !showStream && activity && (
+                  <div className="activity-strip">
+                    <ActivityBadge activity={activity.activity} agent={agentBy(activity.agentId)} t={t} />
+                  </div>
+                )}
+                {busy && !showStream && !activity && (
+                  <div className="activity-strip"><span className="activity-badge queued"><span className="pulse" /><span className="label">{t('act.waiting')}</span></span></div>
                 )}
               </>
             )}

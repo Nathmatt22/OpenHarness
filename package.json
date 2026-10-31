@@ -1,6 +1,6 @@
 {
   "name": "openharness",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "One Platform. Multiple AI Agents.",
   "main": "dist-electron/electron/main.js",

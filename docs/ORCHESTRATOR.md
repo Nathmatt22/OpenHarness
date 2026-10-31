@@ -12,6 +12,8 @@ Resolution is confined by construction: requests must be relative, `..` and abso
 
 Team chat (`teamchat:*` channels, `src/ui/TeamChatView.tsx`) is a persistent shared conversation attached to a team (`conversations.team_id`): the user's message is stored once, then each roster agent runs a turn against the same history (`messages.agent_id` attributes every answer). The mention selector reorders the roster to answer first. The turn engine (`runAgentTurn`) and the workspace instructions (`buildWorkspaceContext`) are the same ones missions use, so folder capabilities behave identically; the internal tool-result messages are persisted for the model but filtered out of the rendered thread. One generation runs at a time per team conversation (`teamchat:stop` aborts it).
 
+Live activity: the turn engine emits `agent:activity` events (`thinking`, `reading`, `writing`, `creating`, `deleting`, `running`, `queued`, `idle`) keyed by conversation and mission id; the renderer keeps a per-conversation map and renders a pulsing badge next to the streaming bubble (team chat) or the running status (missions).
+
 ## Scope
 
 The current scheduler is sequential and bounded by team size. It does not autonomously plan subtask dependencies or execute file changes (file access is read-only, within assigned folders only). Cancellation and mission stop are exposed, though the current renderer's stop control needs the active mission ID wired before relying on it; use this workflow with that limitation in mind.

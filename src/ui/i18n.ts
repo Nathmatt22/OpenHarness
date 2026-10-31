@@ -36,6 +36,16 @@ const fr: Dict = {
   'chat.welcomeSub': 'Choisissez un agent, connectez un modèle, puis lancez la discussion.',
   'chat.loadError': 'Impossible de joindre le processus principal : {error}',
 
+  // Live agent activity
+  'act.queued': '{agent} attend son tour',
+  'act.thinking': '{agent} réfléchit…',
+  'act.reading': '{agent} lit les dossiers…',
+  'act.writing': '{agent} écrit un fichier…',
+  'act.creating': '{agent} crée un dossier…',
+  'act.deleting': '{agent} supprime…',
+  'act.running': '{agent} lance une application…',
+  'act.waiting': 'En attente du premier agent…',
+
   // Team view
   'team.eyebrow': 'MISSION MULTI-AGENTS',
   'team.title': 'Confiez un travail à votre équipe',
@@ -153,6 +163,16 @@ const en: Dict = {
   'chat.welcomeTitle': 'What would you like to accomplish?',
   'chat.welcomeSub': 'Pick an agent, connect a model, then start the conversation.',
   'chat.loadError': 'Cannot reach the main process: {error}',
+
+  // Live agent activity
+  'act.queued': '{agent} is waiting for its turn',
+  'act.thinking': '{agent} is thinking…',
+  'act.reading': '{agent} is reading the folders…',
+  'act.writing': '{agent} is writing a file…',
+  'act.creating': '{agent} is creating a folder…',
+  'act.deleting': '{agent} is deleting…',
+  'act.running': '{agent} is launching an application…',
+  'act.waiting': 'Waiting for the first agent…',
 
   'team.eyebrow': 'MULTI-AGENT MISSION',
   'team.title': 'Give your team some work',

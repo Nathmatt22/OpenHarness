@@ -26,6 +26,11 @@
 - Fixed the assistant answer appearing twice: the accumulated stream was never cleared and was rendered on top of the persisted message. The in-flight answer is now a single bubble that grows during streaming, then becomes the persisted message.
 - Stream handling moved to refs so event handlers always target the active conversation; the realtime subscription is established once instead of on every conversation switch.
 
+## 0.3.2 - Live agent activity
+
+- The interface now shows what agents are doing in real time: a pulsing badge (`Alpha réfléchit…`, `Alpha lit les dossiers…`, `écrit un fichier…`, `crée un dossier…`, `supprime…`, `lance une application…`) attached to the streaming bubble in team chat, and a placeholder while the first agent warms up.
+- Missions display the same badge next to the running status, fed by a dedicated `agent:activity` event (conversation id, mission id, agent id, state) emitted by the shared turn engine; `idle` clears the badge. The main process allowlist also gates emitted channels now, not just invoked ones.
+
 ## 0.3.1 - Team chat
 
 - New shared team conversation: every agent of the roster answers in the same persisted thread, in order, each one seeing what the user and the previous agents said. The thread streams live in the interface, each bubble carries the name and icon of the agent that produced it, and the mention selector targets one agent instead of the whole team.

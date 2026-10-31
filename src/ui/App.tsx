@@ -54,6 +54,9 @@ export default function App() {
     (e) => { if (e.id === activeConversation.current) { setBusy(false); setTeamBusy(false); setError(e.error); resetStream(); } }
   );
 
+  // Live activity for the open team chat thread (what the agents are doing).
+  const teamActivity = realtime.activities[teamConvId || ''];
+
   useEffect(() => {
     if (!agentId && data.agents.length) setAgentId(data.agents[0].id);
   }, [data.agents, agentId]);
@@ -194,6 +197,7 @@ export default function App() {
             setEvents={realtime.setEvents}
             missionDone={realtime.missionDone}
             missionId={realtime.missionId}
+            activities={realtime.activities}
             t={t}
           />
         )}
@@ -209,6 +213,7 @@ export default function App() {
             streaming={streaming}
             streamingAgent={streamAgent}
             busy={teamBusy}
+            activity={teamActivity}
             error={error}
             onClearError={() => setError('')}
             onSend={sendTeam}

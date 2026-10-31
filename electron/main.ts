@@ -24,6 +24,9 @@ const allowed = new Set([
   'teamchat:create', 'teamchat:list', 'teamchat:messages', 'teamchat:send', 'teamchat:stop',
   'mission:start', 'mission:stop', 'mission:events'
 ]);
+const emittedChannels = new Set([
+  'chat:delta', 'chat:error', 'mission:event', 'mission:done', 'mission:started', 'agent:activity'
+]);
 const isString = (v: unknown): v is string => typeof v === 'string';
 function fail(message: string): never { throw new Error(message); }
 
@@ -49,7 +52,10 @@ function providerFor(id: string): ProviderInput {
   };
 }
 
-function emit(channel: string, data: unknown) { win?.webContents.send(channel, data); }
+function emit(channel: string, data: unknown) {
+  if (!emittedChannels.has(channel)) throw new Error('IPC event not allowed');
+  win?.webContents.send(channel, data);
+}
 
 function agent(id: string) {
   return database().prepare('SELECT * FROM agents WHERE id=?').get(id) as any;
@@ -135,43 +141,65 @@ function saveTeamMessage(conversationId: string, role: string, content: string, 
     .run(randomUUID(), conversationId, role, content, new Date().toISOString(), agentId ?? null);
 }
 
+/** Live agent activity states surfaced to the renderer. */
+export type AgentActivity = 'thinking' | 'reading' | 'writing' | 'creating' | 'deleting' | 'running' | 'queued' | 'idle';
+
+/** Broadcast what an agent is doing right now (renderer shows a live badge). */
+function setActivity(conversationId: string, activity: AgentActivity, agentId?: string, missionId?: string) {
+  emit('agent:activity', { conversationId, missionId, agentId, activity });
+}
+
 /**
  * Run one participant turn: stream the answer (emitting chat:delta), persist
  * it, execute any workspace action markers and feed the tagged results back,
- * then return the final text.
+ * then return the final text. Activity events mark thinking/reading/writing/
+ * running phases so the interface can show what the agent is doing live.
  */
 async function runAgentTurn(
   conversationId: string,
   instructions: string,
   ws: WorkspaceFolders,
   signal: AbortSignal,
-  opts?: { agentId?: string; maxRounds?: number }
+  opts?: { agentId?: string; maxRounds?: number; missionId?: string }
 ): Promise<string> {
   const maxRounds = opts?.maxRounds ?? 3;
   let content = '';
   const budget = { writeBytes: 0 };
-  for (let round = 1; round <= maxRounds; round += 1) {
-    const conversation = database().prepare('SELECT * FROM conversations WHERE id=?').get(conversationId) as any;
-    const provider = providerFor(conversation?.connection_id || firstConnectionId());
-    const history = database().prepare('SELECT role,content FROM messages WHERE conversation_id=? ORDER BY created_at')
-      .all(conversationId) as ChatMessage[];
-    content = '';
-    for await (const delta of streamChat(provider, [{ role: 'system', content: instructions }, ...history], signal)) {
-      content += delta;
-      emit('chat:delta', { id: conversationId, streamId: conversationId, delta, agentId: opts?.agentId });
+  try {
+    for (let round = 1; round <= maxRounds; round += 1) {
+      const conversation = database().prepare('SELECT * FROM conversations WHERE id=?').get(conversationId) as any;
+      const provider = providerFor(conversation?.connection_id || firstConnectionId());
+      const history = database().prepare('SELECT role,content FROM messages WHERE conversation_id=? ORDER BY created_at')
+        .all(conversationId) as ChatMessage[];
+      setActivity(conversationId, 'thinking', opts?.agentId, opts?.missionId);
+      content = '';
+      for await (const delta of streamChat(provider, [{ role: 'system', content: instructions }, ...history], signal)) {
+        content += delta;
+        emit('chat:delta', { id: conversationId, streamId: conversationId, delta, agentId: opts?.agentId });
+      }
+      saveTeamMessage(conversationId, 'assistant', content, opts?.agentId);
+      const requests = parseWorkspaceRequests(content);
+      if (!requests.length || round >= maxRounds) return content;
+      const results: string[] = [];
+      for (const request of requests) {
+        const phase: AgentActivity =
+          request.action === 'READ' ? 'reading'
+          : request.action === 'WRITE' ? 'writing'
+          : request.action === 'MKDIR' ? 'creating'
+          : request.action === 'DELETE' ? 'deleting'
+          : request.action === 'RUN' || request.action === 'RUN_WAIT' ? 'running'
+          : 'thinking';
+        setActivity(conversationId, phase, opts?.agentId, opts?.missionId);
+        results.push(await performWorkspaceAction(ws, request, budget));
+      }
+      saveTeamMessage(conversationId, 'user',
+        `Résultats des actions demandées (dossiers assignés) :\n${results.join('\n\n')}\n\n` +
+        'Continue à partir de ces résultats. Ces lignes outil ne sont pas des réponses de l’utilisateur.');
     }
-    saveTeamMessage(conversationId, 'assistant', content, opts?.agentId);
-    const requests = parseWorkspaceRequests(content);
-    if (!requests.length || round >= maxRounds) return content;
-    const results: string[] = [];
-    for (const request of requests) {
-      results.push(await performWorkspaceAction(ws, request, budget));
-    }
-    saveTeamMessage(conversationId, 'user',
-      `Résultats des actions demandées (dossiers assignés) :\n${results.join('\n\n')}\n\n` +
-      'Continue à partir de ces résultats. Ces lignes outil ne sont pas des réponses de l’utilisateur.');
+    return content;
+  } finally {
+    setActivity(conversationId, 'idle', opts?.agentId, opts?.missionId);
   }
-  return content;
 }
 
 function saveMessage(conversationId: string, role: string, content: string) {
@@ -497,7 +525,7 @@ app.whenReady().then(() => {
     // DELETE/MKDIR/RUN/RUN_WAIT), the main process executes them inside the
     // assigned folders and feeds the tagged results back within the same turn.
     const runMissionTurn = async (conversationId: string, instructions: string, agentId: string): Promise<string> =>
-      runAgentTurn(conversationId, instructions, ws, controllers.get(id)!.signal, { agentId });
+      runAgentTurn(conversationId, instructions, ws, controllers.get(id)!.signal, { agentId, missionId: id });
 
     let context = `Mission: ${p.task.trim()}`;
     try {
@@ -506,6 +534,7 @@ app.whenReady().then(() => {
         const a = agent(agentId);
         if (!a) continue;
         record(a.id, `${a.name} démarre son analyse.`);
+        setActivity(id, 'queued', undefined, id);
         const conv = randomUUID();
         d.prepare('INSERT INTO conversations(id,title,agent_id,connection_id,created_at) VALUES(?,?,?,?,?)')
           .run(conv, `Mission — ${p.task.slice(0, 40)}`, a.id, null, new Date().toISOString());

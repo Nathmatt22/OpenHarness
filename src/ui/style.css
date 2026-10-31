@@ -437,6 +437,28 @@ textarea.field { resize: vertical; min-height: 90px; line-height: 1.55; }
 .team-chat-main { min-width: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); padding-left: 24px; }
 .team-chat-main .messages { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
 
+/* Live agent activity badges */
+.activity-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: 500 10.5px var(--font-sans); color: var(--text-3);
+  background: var(--surface-2); border: 1px solid var(--line);
+  padding: 2px 9px; border-radius: 99px; margin-left: 8px; vertical-align: middle;
+}
+.activity-badge .pulse {
+  width: 6px; height: 6px; border-radius: 99px; background: var(--accent);
+  animation: activity-pulse 1.1s ease-in-out infinite; flex-shrink: 0;
+}
+.activity-badge .label { white-space: nowrap; }
+.activity-badge.reading .pulse, .activity-badge.writing .pulse { background: var(--accent); }
+.activity-badge.running .pulse { background: #e8b34a; }
+.activity-badge.deleting .pulse { background: var(--danger); }
+.activity-badge.queued .pulse { background: var(--text-3); animation-duration: 2s; }
+.activity-strip { display: flex; padding: 10px 2px 4px; animation: rise .18s ease-out; }
+@keyframes activity-pulse {
+  0%, 100% { opacity: .35; transform: scale(.8); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+
 /* ── Responsive ────────────────────────────────────────────────── */
 @media (max-width: 1120px) {
   .settings-grid, .team-layout, .team-chat-layout { grid-template-columns: 1fr; gap: 24px; }

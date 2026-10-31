@@ -195,4 +195,27 @@ describe('team chat (E2E)', () => {
     await expect(invoke('teamchat:send', { conversationId: conv.id, content: 'salut' }))
       .rejects.toThrow('Conversation d’équipe introuvable.');
   }, 30000);
+
+  it('broadcasts live activity (thinking, reading, idle) while agents work', async () => {
+    const lecteur = await invoke('agent:save', { name: 'Actif', instructions: 'Tu lis.' }) as { id: string };
+    const team = await invoke('team:save', { name: 'Tchat actif', agentIds: [lecteur.id], folders: [wsDir] }) as { id: string };
+
+    turnScripts.length = 0;
+    turnIndex = 0;
+    turnScripts.push('READ: brief.md', 'Terminé.');
+    capturedBodies.length = 0;
+    mockEvents.length = 0;
+
+    const created = await invoke('teamchat:create', { teamId: team.id }) as { id: string };
+    await invoke('teamchat:send', { conversationId: created.id, content: 'Lis brief.md' });
+
+    const acts = mockEvents
+      .filter((e) => e.channel === 'agent:activity')
+      .map((e) => e.data as { conversationId: string; agentId?: string; activity: string });
+    // The agent is shown thinking, then reading, and ends idle (cleared).
+    expect(acts.some((a) => a.activity === 'thinking' && a.agentId === lecteur.id)).toBe(true);
+    expect(acts.some((a) => a.activity === 'reading' && a.agentId === lecteur.id)).toBe(true);
+    expect(acts.at(-1)?.activity).toBe('idle');
+    expect(acts.every((a) => a.conversationId === created.id)).toBe(true);
+  }, 30000);
 });

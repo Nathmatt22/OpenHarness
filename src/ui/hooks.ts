@@ -47,21 +47,33 @@ export function useTheme() {
   return { light, toggle: () => setLight(l => !l) };
 }
 
+export type Activity = 'thinking' | 'reading' | 'writing' | 'creating' | 'deleting' | 'running' | 'queued' | 'idle';
+
 export function useRealtime(onDelta: (d: any) => void, onChatError: (e: any) => void) {
   const [missionId, setMissionId] = useState('');
   const [events, setEvents] = useState<any[]>([]);
   const [missionRunning, setMissionRunning] = useState(false);
   const [missionDone, setMissionDone] = useState('');
+  // conversationId -> { agentId, activity } : what each thread's agent is doing.
+  const [activities, setActivities] = useState<Record<string, { agentId?: string; activity: Activity }>>({});
   useEffect(() => {
     const offs = [
       api().on('chat:delta', onDelta),
       api().on('chat:error', onChatError),
       api().on('mission:started', (x: any) => { setMissionId(x.missionId); setMissionRunning(true); }),
       api().on('mission:event', (x: any) => setEvents(prev => [...prev, x])),
-      api().on('mission:done', (x: any) => { setMissionRunning(false); setMissionId(''); setMissionDone(x.status ?? 'completed'); })
+      api().on('mission:done', (x: any) => { setMissionRunning(false); setMissionId(''); setMissionDone(x.status ?? 'completed'); }),
+      api().on('agent:activity', (x: any) => {
+        setActivities((prev) => {
+          const next = { ...prev };
+          if (!x.activity || x.activity === 'idle') delete next[x.conversationId];
+          else next[x.conversationId] = { agentId: x.agentId, activity: x.activity };
+          return next;
+        });
+      })
     ];
     return () => offs.forEach(off => off());
     // Handlers read live ids through refs, so a single subscription is enough.
   }, []);
-  return { missionId, events, setEvents, missionRunning, missionDone };
+  return { missionId, events, setEvents, missionRunning, missionDone, activities };
 }
