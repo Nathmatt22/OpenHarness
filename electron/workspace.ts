@@ -77,8 +77,9 @@ function resolveForWrite(root: string, candidate: string): string {
 
 /** Clean a model-supplied relative path: no absolute, no traversal, no control characters. */
 function cleanRelative(relative: string): string {
-  const clean = String(relative || '').trim().replace(/^[/\\]+/, '');
-  if (!clean || clean.includes('..') || path.isAbsolute(clean) || /[<>"|\u0000-\u001f]/.test(clean)) {
+  const clean = String(relative || '').trim();
+  if (!clean || clean.includes('..') || path.isAbsolute(clean) || /^[\\/]/.test(clean)
+    || /[<>"|\u0000-\u001f]/.test(clean)) {
     fail('Chemin de fichier invalide.');
   }
   return clean;
