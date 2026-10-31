@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { PapIcon } from './icons';
 import { Agent, Connection, Endpoints, api } from './types';
+import { parseFolderFlags, encodeFolderFlags } from '../../shared/workspace-flags';
 import type { Lang, TFunction } from './i18n';
 
 export function SettingsPage({ data, refresh, notice, setNotice, lang, onLangChange, t }: {
@@ -11,6 +12,7 @@ export function SettingsPage({ data, refresh, notice, setNotice, lang, onLangCha
   const [testResult, setTestResult] = useState<Record<string, 'ok' | 'err'>>({});
   const [showAgentForm, setShowAgentForm] = useState(false);
   const [teamFolders, setTeamFolders] = useState<string[]>([]);
+  const [teamAllowRun, setTeamAllowRun] = useState(false);
   const endpoints: Endpoints | undefined = data.endpoints;
   const connectionFormRef = useRef<HTMLFormElement>(null);
   const teamFormRef = useRef<HTMLFormElement>(null);
@@ -51,9 +53,10 @@ export function SettingsPage({ data, refresh, notice, setNotice, lang, onLangCha
     const f = new FormData(form);
     const agentIds = data.agents.filter((a: Agent) => (f.getAll('agents') as string[]).includes(a.id)).map((a: Agent) => a.id);
     try {
-      await api()('team:save', { name: String(f.get('name') || ''), agentIds, folders: teamFolders });
+      await api()('team:save', { name: String(f.get('name') || ''), agentIds, folders: teamFolders, allowRun: teamAllowRun });
       teamFormRef.current?.reset();
       setTeamFolders([]);
+      setTeamAllowRun(false);
       await refresh();
       setNotice(t('set.savedTeam'));
     } catch (err) { setNotice(String(err instanceof Error ? err.message : err)); }
@@ -66,19 +69,35 @@ export function SettingsPage({ data, refresh, notice, setNotice, lang, onLangCha
     } catch (err) { setNotice(String(err instanceof Error ? err.message : err)); }
   };
 
+  const decodeFolders = (raw: string | null | undefined): string[] =>
+    parseFolderFlags(raw ? (JSON.parse(raw) as string[]) : []).folders;
+
+  const decodeWritable = (raw: string | null | undefined): Set<string> => {
+    const { writable } = parseFolderFlags(raw ? (JSON.parse(raw) as string[]) : []);
+    return writable;
+  };
+
+  const saveTeamFolders = async (teamId: string, folders: string[], writable: Set<string>) => {
+    const team = data.teams.find((t: any) => t.id === teamId);
+    if (!team) return;
+    // Capability is stored in the entry itself: `path [WRITABLE]` grants write
+    // access during missions; plain entries stay read-only.
+    const stored = encodeFolderFlags(folders, writable);
+    await api()('team:save', {
+      id: team.id, name: team.name,
+      agentIds: JSON.parse(team.agent_ids) as string[], folders: stored,
+      allowRun: team.allow_run === 1
+    });
+    await refresh();
+  };
+
   const assignFolderToTeam = async (teamId: string) => {
     try {
       const folder = await api()('team:pickFolder');
       if (!folder) return;
-      const team = data.teams.find((t: any) => t.id === teamId);
-      if (!team) return;
-      const folders: string[] = team.folders ? JSON.parse(team.folders) : [];
+      const folders: string[] = decodeFolders(data.teams.find((t: any) => t.id === teamId)?.folders);
       if (!folders.includes(folder)) folders.push(folder);
-      await api()('team:save', {
-        id: team.id, name: team.name,
-        agentIds: JSON.parse(team.agent_ids) as string[], folders
-      });
-      await refresh();
+      await saveTeamFolders(teamId, folders, decodeWritable(data.teams.find((t: any) => t.id === teamId)?.folders));
       setNotice(t('set.savedFolder'));
     } catch (err) { setNotice(String(err instanceof Error ? err.message : err)); }
   };
@@ -87,10 +106,33 @@ export function SettingsPage({ data, refresh, notice, setNotice, lang, onLangCha
     try {
       const team = data.teams.find((t: any) => t.id === teamId);
       if (!team) return;
-      const folders: string[] = (team.folders ? JSON.parse(team.folders) : []).filter((f: string) => f !== folder);
+      const writable = decodeWritable(team.folders);
+      const folders = decodeFolders(team.folders).filter((f: string) => f !== folder);
+      writable.delete(folder);
+      await saveTeamFolders(teamId, folders, writable);
+    } catch (err) { setNotice(String(err instanceof Error ? err.message : err)); }
+  };
+
+  const toggleFolderWritable = async (teamId: string, folder: string) => {
+    try {
+      const team = data.teams.find((t: any) => t.id === teamId);
+      if (!team) return;
+      const folders = decodeFolders(team.folders);
+      const writable = decodeWritable(team.folders);
+      if (writable.has(folder)) writable.delete(folder); else writable.add(folder);
+      await saveTeamFolders(teamId, folders, writable);
+    } catch (err) { setNotice(String(err instanceof Error ? err.message : err)); }
+  };
+
+  const toggleTeamRun = async (teamId: string) => {
+    try {
+      const team = data.teams.find((t: any) => t.id === teamId);
+      if (!team) return;
       await api()('team:save', {
         id: team.id, name: team.name,
-        agentIds: JSON.parse(team.agent_ids) as string[], folders
+        agentIds: JSON.parse(team.agent_ids) as string[],
+        folders: encodeFolderFlags(decodeFolders(team.folders), decodeWritable(team.folders)),
+        allowRun: team.allow_run !== 1
       });
       await refresh();
     } catch (err) { setNotice(String(err instanceof Error ? err.message : err)); }
@@ -211,40 +253,69 @@ export function SettingsPage({ data, refresh, notice, setNotice, lang, onLangCha
                         <span className="folder-chip" key={f}>
                           <PapIcon name="layers" size={12} />
                           <span className="label">{f}</span>
-                          <button type="button" className="chip-remove" onClick={() => setTeamFolders((prev) => prev.filter((x) => x !== f))}>×</button>
+                          <button type="button" className="chip-remove" onClick={() => {
+                            setTeamFolders((prev) => prev.filter((x) => x !== f));
+                          }}>×</button>
                         </span>
                       ))}
                     </div>
                   )}
+                  <label className="check-item" style={{ marginTop: 8, display: 'flex' }}>
+                    <input
+                      type="checkbox"
+                      checked={teamAllowRun}
+                      onChange={(e) => setTeamAllowRun(e.target.checked)}
+                    />
+                    {t('set.allowRun')}
+                  </label>
+                  <span className="card-sub" style={{ fontSize: 10.5, display: 'block', marginTop: 4 }}>
+                    {t('set.allowRunSub')}
+                  </span>
                 </div>
                 <div className="form-actions"><button className="btn btn-primary">{t('set.saveTeam')}</button></div>
               </form>
-              {data.teams.map((t_: any) => (
+              {data.teams.map((t_: any) => {
+                const folders = decodeFolders(t_.folders);
+                const writable = decodeWritable(t_.folders);
+                return (
                 <div className="connection-row" key={t_.id}>
                   <div className="meta">
                     <div className="name">{t_.name}</div>
                     <div className="sub">
                       {(JSON.parse(t_.agent_ids) as string[]).length} agents
-                      {t_.folders && (JSON.parse(t_.folders) as string[]).length > 0
-                        ? ` · ${(JSON.parse(t_.folders) as string[]).length} ${t('set.foldersCount')}`
-                        : ''}
+                      {folders.length > 0 ? ` · ${folders.length} ${t('set.foldersCount')}` : ''}
                     </div>
-                    {t_.folders && (JSON.parse(t_.folders) as string[]).length > 0 && (
+                    {folders.length > 0 && (
                       <div className="folder-chips" style={{ marginTop: 6 }}>
-                        {(JSON.parse(t_.folders) as string[]).map((f: string) => (
+                        {folders.map((f: string) => (
                           <span className="folder-chip" key={f}>
                             <PapIcon name="layers" size={12} />
                             <span className="label">{f}</span>
+                            <button
+                              type="button"
+                              className={`chip-toggle ${writable.has(f) ? 'on' : ''}`}
+                              title={writable.has(f) ? t('set.writableOn') : t('set.writableOff')}
+                              onClick={() => toggleFolderWritable(t_.id, f)}
+                            >{writable.has(f) ? t('set.writableOn') : t('set.writableOff')}</button>
                             <button type="button" className="chip-remove" title={t('set.removeFolder')} onClick={() => removeFolderFromTeam(t_.id, f)}>×</button>
                           </span>
                         ))}
                       </div>
                     )}
+                    <label className="check-item" style={{ marginTop: 6, display: 'flex' }}>
+                      <input
+                        type="checkbox"
+                        checked={t_.allow_run === 1}
+                        onChange={() => toggleTeamRun(t_.id)}
+                      />
+                      {t('set.allowRun')}
+                    </label>
                   </div>
                   <button className="text-btn" onClick={() => assignFolderToTeam(t_.id)}>{t('set.addFolder')}</button>
                   <button className="text-btn danger" onClick={async () => { await api()('team:delete', { id: t_.id }); await refresh(); }}>{t('set.delete')}</button>
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             <div className="card">

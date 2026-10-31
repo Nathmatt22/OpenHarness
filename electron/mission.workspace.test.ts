@@ -162,8 +162,8 @@ describe('mission with assigned folder (E2E)', () => {
 
     expect(mission.result).toContain('TERMINE');
     // Round 2 must have received the real file content through the READ cycle.
-    expect(capturedBodies[1]).toContain('Résultats de lecture');
-    expect(capturedBodies[1]).toContain('contenu interne');
+    expect(capturedBodies[1]).toContain('Résultats des actions demandées (dossiers assignés)');
+    expect(capturedBodies[1]).toContain('FILE_CONTENT');
 
     const Database = (await import('better-sqlite3')).default as unknown as new (file: string) => {
       prepare: (sql: string) => { get: (...params: unknown[]) => any; all: (...params: unknown[]) => any[]; };
@@ -179,7 +179,7 @@ describe('mission with assigned folder (E2E)', () => {
 
   it('blocks a READ that escapes the assigned folder', async () => {
     const agent = await invoke('agent:save', { name: 'Fouineur', instructions: 'Tu lis tout.' }) as { id: string };
-    const team = await invoke('team:save', { name: 'Équipe traversal', agentIds: [agent.id], folders: [wsDir] }) as { id: string };
+    const team = await invoke('team:save', { name: 'Équipe traversal', agentIds: [agent.id], folders: [`${wsDir} [WRITABLE]`], allowRun: true }) as { id: string };
 
     turnScripts.length = 0;
     turnScripts.push('READ: ../prive/secret.txt', 'FIN');
@@ -191,9 +191,69 @@ describe('mission with assigned folder (E2E)', () => {
 
     expect(mission.result).toContain('FIN');
     // The second turn reports the policy refusal, never the file content.
-    expect(capturedBodies[1]).toContain('Résultats de lecture (lecture seule, dossiers assignés)');
+    expect(capturedBodies[1]).toContain('Résultats des actions demandées (dossiers assignés)');
     expect(capturedBodies[1]).toMatch(/impossible : (Chemin de fichier invalide|Chemin hors des dossiers assignés)/);
     const allText = JSON.stringify(capturedBodies) + JSON.stringify(mockEvents) + mission.result;
     expect(allText).not.toContain('TOPSECRET_CONTENT');
+  }, 30000);
+
+  it('writes files and creates folders when the folder is marked writable', async () => {
+    const agent = await invoke('agent:save', { name: 'Rédacteur', instructions: 'Tu écris les fichiers demandés.' }) as { id: string };
+    const team = await invoke('team:save', { name: 'Équipe écriture', agentIds: [agent.id], folders: [`${wsDir} [WRITABLE]`] }) as { id: string };
+
+    turnScripts.length = 0;
+    turnScripts.push(
+      'Je crée le rapport.\nWRITE: rapports/analyse.md | # Analyse\\nTout est vérifié.\nMKDIR: rapports/archives |mk1',
+      'Écriture terminée, dossier archives prêt.'
+    );
+    turnIndex = 0;
+    capturedBodies.length = 0;
+    mockEvents.length = 0;
+
+    const mission = await invoke('mission:start', { teamId: team.id, task: 'Rédige le rapport' }) as { id: string; result: string };
+
+    expect(mission.result).toContain('Écriture terminée');
+    expect(fs.readFileSync(path.join(wsDir, 'rapports', 'analyse.md'), 'utf8')).toBe('# Analyse\nTout est vérifié.');
+    expect(fs.statSync(path.join(wsDir, 'rapports', 'archives')).isDirectory()).toBe(true);
+    // The agent received the tool results and the write marker stayed out of the final answer.
+    expect(capturedBodies[1]).toContain('WRITE_RESULT rapports/analyse.md');
+    expect(capturedBodies[1]).toContain('MKDIR_RESULT [mk1]');
+  }, 30000);
+
+  it('refuses WRITE when no folder is writable and refuses RUN when the team toggle is off', async () => {
+    const agent = await invoke('agent:save', { name: 'Zélé', instructions: 'Tu agis.' }) as { id: string };
+    const team = await invoke('team:save', { name: 'Équipe stricte', agentIds: [agent.id], folders: [wsDir], allowRun: false }) as { id: string };
+
+    turnScripts.length = 0;
+    turnScripts.push('WRITE: hack.txt | contenu\nRUN: notepad.exe', 'Je m’arrête.');
+    turnIndex = 0;
+    capturedBodies.length = 0;
+
+    const mission = await invoke('mission:start', { teamId: team.id, task: 'Tentative interdite' }) as { id: string; result: string };
+
+    expect(mission.result).toContain('Je m’arrête.');
+    expect(capturedBodies[1]).toContain('Aucun dossier en écriture');
+    expect(capturedBodies[1]).toContain('le lancement d’applications est désactivé');
+    expect(fs.existsSync(path.join(wsDir, 'hack.txt'))).toBe(false);
+  }, 30000);
+
+  it('runs an allowed application during a mission and reports the exit code', async () => {
+    const agent = await invoke('agent:save', { name: 'Opérateur', instructions: 'Tu exécutes.' }) as { id: string };
+    const team = await invoke('team:save', { name: 'Équipe ops', agentIds: [agent.id], folders: [wsDir], allowRun: true }) as { id: string };
+
+    turnScripts.length = 0;
+    turnScripts.push(
+      'RUN_WAIT: node --eval "process.stdout.write(\'mission-ok\')" | tools',
+      'Commande exécutée avec succès.'
+    );
+    turnIndex = 0;
+    capturedBodies.length = 0;
+
+    const mission = await invoke('mission:start', { teamId: team.id, task: 'Vérifie l’environnement' }) as { id: string; result: string };
+
+    expect(mission.result).toContain('Commande exécutée avec succès.');
+    expect(capturedBodies[1]).toContain('RUN_RESULT');
+    expect(capturedBodies[1]).toContain('mission-ok');
+    expect(capturedBodies[1]).toContain('Code de sortie : 0');
   }, 30000);
 });

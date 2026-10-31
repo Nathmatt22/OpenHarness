@@ -2,7 +2,7 @@ export interface Agent { id: string; name: string; description: string; instruct
 export interface Connection { id: string; name: string; type: string; base_url: string; model: string; created_at: string; }
 export interface Conversation { id: string; title: string; agent_id: string; connection_id: string | null; created_at: string; }
 export interface ChatMessage { id: string; role: string; content: string; }
-export interface Team { id: string; name: string; agent_ids: string; folders: string | null; created_at: string; }
+export interface Team { id: string; name: string; agent_ids: string; folders: string | null; allow_run?: number; created_at: string; }
 export interface WorkspaceEntry { name: string; type: 'file' | 'folder'; size?: number; }
 export interface WorkspaceListing { folder: string; entries: WorkspaceEntry[]; }
 export interface MissionEvent { missionId: string; agentId: string; content: string; created_at?: string; }
@@ -32,11 +32,15 @@ export interface Invoke {
   (channel: 'chat:stop', data: { id: string }): Promise<boolean>;
   (channel: 'agent:save', data: { id?: string; name: string; description?: string; instructions: string }): Promise<{ id: string }>;
   (channel: 'agent:delete', data: { id: string }): Promise<boolean>;
-  (channel: 'team:save', data: { id?: string; name: string; agentIds: string[]; folders?: string[] }): Promise<{ id: string }>;
+  (channel: 'team:save', data: { id?: string; name: string; agentIds: string[]; folders?: string[]; allowRun?: boolean }): Promise<{ id: string }>;
   (channel: 'team:delete', data: { id: string }): Promise<boolean>;
   (channel: 'team:pickFolder'): Promise<string | null>;
   (channel: 'workspace:list', data: { teamId: string }): Promise<WorkspaceListing[]>;
   (channel: 'workspace:read', data: { teamId: string; relative: string }): Promise<string>;
+  (channel: 'workspace:write', data: { teamId: string; relative: string; content: string }): Promise<string>;
+  (channel: 'workspace:delete', data: { teamId: string; relative: string }): Promise<string>;
+  (channel: 'workspace:mkdir', data: { teamId: string; relative: string }): Promise<string>;
+  (channel: 'workspace:run', data: { teamId: string; command: string; wait?: boolean; cwd?: string }): Promise<string>;
   (channel: 'mission:start', data: { teamId: string; task: string }): Promise<{ id: string; result: string }>;
   (channel: 'mission:stop', data: { id: string }): Promise<boolean>;
   (channel: 'mission:events', data: { id: string }): Promise<MissionEvent[]>;

@@ -35,9 +35,9 @@ The Windows setup (`OpenHarness-Setup.exe`) is an assisted NSIS installer: it as
 
 ## Current scope
 
-Included: isolated Electron renderer, validated IPC allowlist, local SQLite, OS-protected API keys, Anthropic and OpenAI-compatible streaming, ten built-in agents, custom agent creation, conversation history, saved teams, sequential real-provider team missions, mission events, cancellation plumbing, and per-team assigned folders for read-only file access during missions (`READ:` request cycle with symlink-safe path confinement).
+Included: isolated Electron renderer, validated IPC allowlist, local SQLite, OS-protected API keys, Anthropic and OpenAI-compatible streaming, ten built-in agents, custom agent creation, conversation history, saved teams, sequential real-provider team missions, mission events, cancellation plumbing, and per-team assigned folders with per-folder read/write capabilities during missions (`READ:`/`WRITE:`/`MKDIR:`/`DELETE:` request cycle with symlink-safe path confinement) plus optional application launching (`RUN:`/`RUN_WAIT:`) gated by a team-level switch.
 
-Not yet implemented: file attachment/content tools, safe project write/execute with rollback, concurrent/dependency-aware scheduling, provider model discovery, custom-agent edit/duplicate/disable flows, mission resume/history UI, web-search tools, human approval gates, macOS notarization, and comprehensive end-to-end provider tests. The team workflow is sequential delegation, not a fully autonomous task-planning graph. No provider calls are mocked in the application.
+Not yet implemented: file attachment/content tools, undo/rollback of agent file writes, concurrent/dependency-aware scheduling, provider model discovery, custom-agent edit/duplicate/disable flows, mission resume/history UI, web-search tools, human approval gates, macOS notarization, and comprehensive end-to-end provider tests. The team workflow is sequential delegation, not a fully autonomous task-planning graph. No provider calls are mocked in the application.
 
 ## UI
 

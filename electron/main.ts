@@ -4,7 +4,11 @@ import { randomUUID } from 'node:crypto';
 import { database, initDatabase } from './database';
 import { builtInAgents } from './agents';
 import { streamChat, testProvider, providerEndpoint, type ProviderInput, type ChatMessage } from './providers';
-import { listWorkspace, readWorkspaceFile, parseReadRequests, isPolicy } from './workspace';
+import {
+  listWorkspace, readWorkspaceFile, writeWorkspaceFile, deleteWorkspaceEntry, mkdirWorkspace,
+  parseWorkspaceRequests, parseFolderFlags, performWorkspaceAction, runApplication, isPolicy,
+  type ParsedRequest
+} from './workspace';
 
 let win: BrowserWindow;
 const controllers = new Map<string, AbortController>();
@@ -16,6 +20,7 @@ const allowed = new Set([
   'chat:send', 'chat:stop',
   'agent:save', 'agent:delete',
   'team:save', 'team:delete', 'team:pickFolder', 'workspace:list', 'workspace:read',
+  'workspace:write', 'workspace:delete', 'workspace:mkdir', 'workspace:run',
   'mission:start', 'mission:stop', 'mission:events'
 ]);
 const isString = (v: unknown): v is string => typeof v === 'string';
@@ -47,6 +52,23 @@ function emit(channel: string, data: unknown) { win?.webContents.send(channel, d
 
 function agent(id: string) {
   return database().prepare('SELECT * FROM agents WHERE id=?').get(id) as any;
+}
+
+/** Folders stored on the team row; `[]` when the team has none or is unknown. */
+function teamFolders(teamId: string): string[] {
+  const team = database().prepare('SELECT folders FROM teams WHERE id=?').get(teamId) as any;
+  return team?.folders ? (JSON.parse(team.folders) as string[]) : [];
+}
+
+/** Decoded folder entries plus the writable subset (entries may carry a flag). */
+function teamWorkspace(teamId: string) {
+  return parseFolderFlags(teamFolders(teamId));
+}
+
+/** Whether the team-level "agents may launch applications" switch is on. */
+function teamAllowRun(teamId: string): boolean {
+  const team = database().prepare('SELECT allow_run FROM teams WHERE id=?').get(teamId) as any;
+  return team?.allow_run === 1;
 }
 
 function saveMessage(conversationId: string, role: string, content: string) {
@@ -105,7 +127,7 @@ app.whenReady().then(() => {
 
   if (process.env.VITE_DEV_SERVER_URL) void win.loadURL(process.env.VITE_DEV_SERVER_URL);
   else if (!app.isPackaged) void win.loadURL('http://localhost:5173');
-  else void win.loadFile(path.join(__dirname, '../dist/index.html'));
+  else void win.loadFile(path.join(__dirname, '../../dist/index.html'));
   win.webContents.on('did-fail-load', (_e, code, description, url) =>
     console.error(`Renderer load failed (${code}): ${description} [${url}]`));
   win.webContents.on('render-process-gone', (_e, details) => console.error('Renderer process stopped:', details));
@@ -114,7 +136,7 @@ app.whenReady().then(() => {
     agents: d.prepare('SELECT * FROM agents ORDER BY custom,name').all(),
     connections: d.prepare('SELECT id,name,type,base_url,model,created_at FROM connections ORDER BY created_at').all(),
     conversations: d.prepare('SELECT * FROM conversations ORDER BY created_at DESC').all(),
-    teams: d.prepare('SELECT id,name,agent_ids,folders,created_at FROM teams ORDER BY created_at DESC').all(),
+    teams: d.prepare('SELECT id,name,agent_ids,folders,allow_run,created_at FROM teams ORDER BY created_at DESC').all(),
     settings: Object.fromEntries(d.prepare('SELECT key,value FROM settings').all().map((r: any) => [r.key, r.value])) as Record<string, string>,
     endpoints: providerEndpoint('claude') && providerEndpoint('openai')
       ? { claude: providerEndpoint('claude'), openai: providerEndpoint('openai') }
@@ -219,8 +241,11 @@ app.whenReady().then(() => {
     const folders = Array.isArray(p.folders)
       ? [...new Set(p.folders.map((f: unknown) => String(f).trim()).filter(Boolean))]
       : [];
-    d.prepare('INSERT INTO teams(id,name,agent_ids,folders,created_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,agent_ids=excluded.agent_ids,folders=excluded.folders')
-      .run(id, p.name.trim(), JSON.stringify(p.agentIds), JSON.stringify(folders), new Date().toISOString());
+    d.prepare(`INSERT INTO teams(id,name,agent_ids,folders,allow_run,created_at) VALUES(?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET name=excluded.name,agent_ids=excluded.agent_ids,
+      folders=excluded.folders,allow_run=excluded.allow_run`)
+      .run(id, p.name.trim(), JSON.stringify(p.agentIds), JSON.stringify(folders),
+        p.allowRun ? 1 : 0, new Date().toISOString());
     return { id };
   });
 
@@ -241,18 +266,48 @@ app.whenReady().then(() => {
   });
 
   register('workspace:list', (p: any) => {
-    const team = d.prepare('SELECT folders FROM teams WHERE id=?').get(p.teamId) as any;
-    const folders: string[] = team?.folders ? JSON.parse(team.folders) : [];
+    const { folders } = teamWorkspace(p.teamId);
     if (!folders.length) fail('Cette équipe n’a aucun dossier assigné.');
     return listWorkspace(folders);
   });
 
   register('workspace:read', (p: any) => {
     if (!isString(p?.relative) || !p.relative.trim()) fail('Nom de fichier requis.');
-    const team = d.prepare('SELECT folders FROM teams WHERE id=?').get(p.teamId) as any;
-    const folders: string[] = team?.folders ? JSON.parse(team.folders) : [];
+    const { folders } = teamWorkspace(p.teamId);
     if (!folders.length) fail('Cette équipe n’a aucun dossier assigné.');
     return readWorkspaceFile(folders, p.relative);
+  });
+
+  register('workspace:write', (p: any) => {
+    if (!isString(p?.relative) || !p.relative.trim()) fail('Nom de fichier requis.');
+    if (!isString(p?.content)) fail('Contenu requis.');
+    if (p.content.length > 512 * 1024) fail('Contenu trop volumineux (max 512 Ko).');
+    const { folders, writable } = teamWorkspace(p.teamId);
+    return writeWorkspaceFile(folders, writable, p.relative, p.content);
+  });
+
+  register('workspace:delete', (p: any) => {
+    if (!isString(p?.relative) || !p.relative.trim()) fail('Nom de fichier requis.');
+    const { folders, writable } = teamWorkspace(p.teamId);
+    return deleteWorkspaceEntry(folders, writable, p.relative);
+  });
+
+  register('workspace:mkdir', (p: any) => {
+    if (!isString(p?.relative) || !p.relative.trim()) fail('Nom de dossier requis.');
+    const { folders, writable } = teamWorkspace(p.teamId);
+    return mkdirWorkspace(folders, writable, p.relative);
+  });
+
+  register('workspace:run', async (p: any) => {
+    if (!isString(p?.command) || !p.command.trim()) fail('Commande requise.');
+    const { folders } = teamWorkspace(p.teamId);
+    if (!folders.length) fail('Cette équipe n’a aucun dossier assigné.');
+    if (!teamAllowRun(p.teamId)) fail('Le lancement d’applications est désactivé pour cette équipe.');
+    const result = await runApplication(folders, p.command, {
+      wait: p.wait === true,
+      cwd: isString(p.cwd) ? p.cwd : undefined
+    });
+    return result.summary;
   });
 
   register('mission:start', async (p: any) => {
@@ -271,25 +326,53 @@ app.whenReady().then(() => {
       emit('mission:event', { missionId: id, agentId: aid, content: text });
     };
 
-    // Workspace context built from the folders assigned to the team.
+    // Workspace capabilities for this mission: plain folders are readable,
+    // entries flagged [WRITABLE] add write support, allow_run gates RUN.
+    const { folders: wsFolders, writable } = parseFolderFlags(folders);
+    const allowRun = team.allow_run === 1;
+    const ws = { folders: wsFolders, writable, allowRun };
+
     let workspaceContext = '';
-    if (folders.length) {
+    if (wsFolders.length) {
       try {
-        const listing = listWorkspace(folders);
-        workspaceContext = '\n\nDossiers assignés à l’équipe (lecture seule) :\n' + listing.map((l) =>
-          `${l.folder} → ${l.entries.map((e) => e.name).join(', ') || '(vide)'}`).join('\n');
+        const listing = listWorkspace(wsFolders);
+        workspaceContext = '\n\nDossiers assignés à l’équipe :\n' + listing.map((l) =>
+          `${writable.has(l.folder) ? '[écriture autorisée]' : '[lecture seule]'} ${l.folder} → ${l.entries.map((e) => e.name).join(', ') || '(vide)'}`).join('\n');
       } catch (e) {
         if (!isPolicy(e)) throw e;
         workspaceContext = `\n\nDossiers assignés illisibles : ${e.message}`;
       }
+      const capabilities = [
+        'Pour lire un fichier, écris une ligne complète "READ: chemin/relatif.ext".'
+      ];
+      if (writable.size) {
+        capabilities.push(
+          'Dans les dossiers marqués [écriture autorisée], tu peux aussi demander, sur une seule ligne :',
+          '- "WRITE: chemin/relatif.ext | contenu complet du fichier" (crée ou remplace le fichier, 512 Ko max) ;',
+          '- "MKDIR: sous/dossier" ;',
+          '- "DELETE: chemin/relatif" (fichier ou dossier vide).'
+        );
+      } else {
+        capabilities.push('Ces dossiers sont en lecture seule : aucune écriture n’est possible.');
+      }
+      if (allowRun) {
+        capabilities.push(
+          'Tu peux lancer des applications installées par leur nom, ou par un chemin dans les dossiers assignés :',
+          '- "RUN: programme argument1 argument2" pour lancer sans attendre (aperçu de sortie limité) ;',
+          '- "RUN_WAIT: programme arguments | sous/dossier" pour attendre la fin et obtenir le code de sortie (120 s max) ; le segment après | est le dossier de travail.',
+          'N’invente jamais une exécution : si tu n’as pas réellement lancé de commande, dis-le.'
+        );
+      }
+      workspaceContext += '\n\nActions disponibles :\n' + capabilities.map((c) => `- ${c}`).join('\n');
     }
 
-    // One real file read per agent turn: the model signals a file with a READ
-    // marker line, the main process reads it inside the assigned folders and
-    // re-sends the content so the agent can use it in the same turn.
+    // Tool loop: the model signals actions with full-line markers (READ/WRITE/
+    // DELETE/MKDIR/RUN/RUN_WAIT), the main process executes them inside the
+    // assigned folders and feeds the tagged results back within the same turn.
     const runAgentTurn = async (conversationId: string, instructions: string): Promise<string> => {
       let content = '';
       let round = 0;
+      const budget = { writeBytes: 0 };
       while (round < 3) {
         round += 1;
         const conversation = d.prepare('SELECT * FROM conversations WHERE id=?').get(conversationId) as any;
@@ -305,19 +388,15 @@ app.whenReady().then(() => {
           emit('chat:delta', { id: conversationId, streamId: conversationId, delta });
         }
         saveMessage(conversationId, 'assistant', content);
-        const matches = parseReadRequests(content);
-        if (!matches.length || round >= 3) return content;
-        const readResults: string[] = [];
-        for (const match of matches) {
-          try {
-            const text = readWorkspaceFile(folders, match);
-            readResults.push(`Contenu de ${match} :\n${text}`);
-          } catch (e) {
-            readResults.push(`Lecture de ${match} impossible : ${e instanceof Error ? e.message : e}`);
-          }
+        const requests = parseWorkspaceRequests(content);
+        if (!requests.length || round >= 3) return content;
+        const results: string[] = [];
+        for (const request of requests) {
+          results.push(await performWorkspaceAction(ws, request, budget));
         }
         saveMessage(conversationId, 'user',
-          `Résultats de lecture (lecture seule, dossiers assignés) :\n${readResults.join('\n\n')}`);
+          `Résultats des actions demandées (dossiers assignés) :\n${results.join('\n\n')}\n\n` +
+          'Continue à partir de ces résultats. Ces lignes outil ne sont pas des réponses de l’utilisateur.');
       }
       return content;
     };
@@ -334,7 +413,7 @@ app.whenReady().then(() => {
           .run(conv, `Mission — ${p.task.slice(0, 40)}`, a.id, null, new Date().toISOString());
         saveMessage(conv, 'user',
           `Mission globale: ${p.task}\n\nContexte et résultats des agents précédents:\n${context}` +
-          (workspaceContext ? `\n${workspaceContext}\n\nSi un fichier listé est utile, répondez avec une ligne "READ: nom-du-fichier" pour en obtenir le contenu.` : ''));
+          (workspaceContext ? `\n${workspaceContext}\n\nPour obtenir le contenu d'un fichier ou exécuter une action, utilise les lignes actions décrites ci-dessus dans ta réponse.` : ''));
         const result = await runAgentTurn(conv, a.instructions);
         context += `\n\n${a.name}: ${result}`;
         record(a.id, result);

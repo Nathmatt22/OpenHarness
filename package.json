@@ -1,11 +1,11 @@
 {
   "name": "openharness",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "description": "One Platform. Multiple AI Agents.",
-  "main": "dist-electron/main.js",
+  "main": "dist-electron/electron/main.js",
   "scripts": {
-    "dev": "concurrently -k \"vite\" \"tsc -p tsconfig.electron.json --watch\" \"wait-on tcp:5173 file:dist-electron/main.js file:dist-electron/preload.js && electron .\"",
+    "dev": "concurrently -k \"vite\" \"tsc -p tsconfig.electron.json --watch\" \"wait-on tcp:5173 file:dist-electron/electron/main.js file:dist-electron/electron/preload.js && electron .\"",
     "build": "tsc -p tsconfig.electron.json && tsc -b && vite build",
     "build:win": "npm run build && electron-builder --win nsis --publish never",
     "build:linux": "npm run build && electron-builder --linux AppImage --publish never",
@@ -37,7 +37,7 @@
     "appId": "io.openharness.desktop",
     "productName": "OpenHarness",
     "directories": { "output": "release" },
-    "files": ["dist/**", "dist-electron/**", "package.json"],
+    "files": ["dist/**", "dist-electron/electron/**", "dist-electron/shared/**", "package.json"],
     "win": { "target": "nsis", "artifactName": "OpenHarness-Setup.${ext}", "icon": "build/icon/256.png" },
     "nsis": {
       "oneClick": false,

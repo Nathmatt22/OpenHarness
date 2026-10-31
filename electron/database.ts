@@ -25,5 +25,8 @@ function migrate(database: Database.Database) {
   if (!columns('teams').some((c) => c.name === 'folders')) {
     database.exec('ALTER TABLE teams ADD COLUMN folders TEXT');
   }
+  if (!columns('teams').some((c) => c.name === 'allow_run')) {
+    database.exec('ALTER TABLE teams ADD COLUMN allow_run INTEGER DEFAULT 0');
+  }
 }
 export function database() { if (!db) throw new Error('Database not initialized'); return db; }

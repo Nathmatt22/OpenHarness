@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { PapIcon } from './icons';
 import { Team, WorkspaceListing, api } from './types';
+import { parseFolderFlags } from '../../shared/workspace-flags';
 import type { TFunction } from './i18n';
 
 export function TeamView({ teams, agents, missionRunning, events, setEvents, missionDone, missionId, t } : {
@@ -12,7 +13,9 @@ export function TeamView({ teams, agents, missionRunning, events, setEvents, mis
   const [workspace, setWorkspace] = useState<WorkspaceListing[] | null>(null);
   const selectedTeam = teams.find(t => t.id === teamId) || teams[0];
   const roster: string[] = selectedTeam ? JSON.parse(selectedTeam.agent_ids) : [];
-  const folders: string[] = selectedTeam?.folders ? JSON.parse(selectedTeam.folders) : [];
+  const { folders, writable } = parseFolderFlags(
+    selectedTeam?.folders ? (JSON.parse(selectedTeam.folders) as string[]) : []
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -69,7 +72,9 @@ export function TeamView({ teams, agents, missionRunning, events, setEvents, mis
                   <div className="workspace-list">
                     {(workspace ?? []).map((l) => (
                       <div key={l.folder}>
-                        <span className="f">{l.folder}</span>
+                        <span className="f">
+                          {writable.has(l.folder) ? `[${t('set.writableOn')}] ` : ''}{l.folder}
+                        </span>
                         {l.entries.map((e) => e.name).join(' · ') || t('team.emptyFolder')}
                       </div>
                     ))}

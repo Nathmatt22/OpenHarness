@@ -26,6 +26,15 @@
 - Fixed the assistant answer appearing twice: the accumulated stream was never cleared and was rendered on top of the persisted message. The in-flight answer is now a single bubble that grows during streaming, then becomes the persisted message.
 - Stream handling moved to refs so event handlers always target the active conversation; the realtime subscription is established once instead of on every conversation switch.
 
+## 0.3.0 - Team workspace write access and application launching
+
+- Folders assigned to a team can now be marked "Écriture" in Settings → Équipes; flagged entries are stored as `path [WRITABLE]` and decoded by `shared/workspace-flags.ts` (single source of truth for main process and renderer).
+- During missions, agents can now emit full-line action markers: `WRITE: chemin | contenu` (512 KB max, 2 MB per turn, `\n`/`\t` escapes supported), `MKDIR: chemin` and `DELETE: chemin` (file or empty folder only) in folders flagged writable, and `RUN:` / `RUN_WAIT:` to launch applications when the new team-level toggle "Autoriser le lancement d'applications" is on.
+- RUN resolves bare program names on the PATH or paths inside the assigned folders, passes arguments without shell interpolation, captures a bounded output snapshot, and `RUN_WAIT` reports the exit code (120 s max); arguments that look like out-of-root paths are refused.
+- Write targets are anchored on their deepest existing ancestor, so a symlinked parent directory cannot smuggle a path out of the writable root; DELETE refuses the folder root and never recurses.
+- The team view and mission context show per-folder capability flags; results come back to the agent as tagged tool lines (`FILE_CONTENT`, `WRITE_RESULT`, `MKDIR_RESULT`, `DELETE_RESULT`, `RUN_RESULT`) within the same turn (3 rounds, 6 actions per round).
+- Tests: parsing of the new markers, write/delete/mkdir confinement (traversal, symlinks, read-only folders), RUN program/argument confinement and E2E missions covering write+mkdir, refusals without permissions, and an allowed RUN_WAIT execution.
+
 ## 0.2.1 - Assisted installer and interface language
 
 - The Windows setup is now a real assisted installer: language selection dialog at startup (French/English, English fallback), license page with provider/mission notices, installation mode page (per-user default, per-machine with elevation), and a changeable installation directory.
