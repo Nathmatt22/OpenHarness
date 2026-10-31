@@ -7,8 +7,8 @@
   "scripts": {
     "dev": "concurrently -k \"vite\" \"tsc -p tsconfig.electron.json --watch\" \"wait-on tcp:5173 file:dist-electron/main.js file:dist-electron/preload.js && electron .\"",
     "build": "tsc -p tsconfig.electron.json && tsc -b && vite build",
-    "build:win": "npm run build && electron-builder --win nsis",
-    "build:linux": "npm run build && electron-builder --linux AppImage",
+    "build:win": "npm run build && electron-builder --win nsis --publish never",
+    "build:linux": "npm run build && electron-builder --linux AppImage --publish never",
     "test": "vitest run --exclude dist-electron/**",
     "typecheck": "tsc -p tsconfig.electron.json && tsc -b --pretty false"
   },
