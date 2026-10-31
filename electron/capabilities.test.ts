@@ -34,6 +34,31 @@ describe('request parsing', () => {
     expect(requests[1].tag).toBe('a1');
   });
 
+  it('parses markers decorated with markdown around the action', () => {
+    const content = [
+      'Voici mes actions :',
+      '- **WRITE**: `rapport/final.md` | # Titre',
+      '3. WRITE: "notes/deux.md" | Contenu',
+      '> "READ: notes.txt"',
+      'Je lance aussi `RUN: node --version`.'
+    ].join('\n');
+    const requests = parseWorkspaceRequests(content);
+    expect(requests.map((r) => r.action)).toEqual(['WRITE', 'WRITE', 'READ', 'RUN']);
+    expect(requests[0].path).toBe('rapport/final.md');
+    expect(requests[1].path).toBe('notes/deux.md');
+    expect(requests[1].content).toBe('Contenu');
+    expect(requests[2].path).toBe('notes.txt');
+    expect(requests[3].path).toBe('node --version');
+  });
+
+  it('does not duplicate plain markers already parsed', () => {
+    const content = 'RUN_WAIT: node --version | tools\nRUN: notepad.exe';
+    const requests = parseWorkspaceRequests(content);
+    expect(requests.map((r) => r.action)).toEqual(['RUN_WAIT', 'RUN']);
+    expect(requests[0].path).toBe('node --version');
+    expect(requests[0].tag).toBe('tools');
+  });
+
   it('parses RUN and RUN_WAIT with cwd segment', () => {
     const requests = parseWorkspaceRequests('RUN_WAIT: node --version | tools\nRUN: notepad.exe');
     expect(requests.map((r) => r.action)).toEqual(['RUN_WAIT', 'RUN']);
@@ -145,6 +170,22 @@ describe('runApplication', () => {
     const relative = path.relative(root, script).split(path.sep).join('/');
     await expect(runApplication([root], `node ${relative}`, { wait: true })).rejects.toThrow(PolicyError);
     await expect(runApplication([root], `node "${script}"`, { wait: true })).rejects.toThrow(PolicyError);
+  });
+
+  it('runs quoted scripts inside the assigned folders', async () => {
+    // A quoted path arg is legitimate: the quotes are shell syntax, not a policy issue.
+    const script = path.join(root, 'hello world.js');
+    fs.writeFileSync(script, 'process.stdout.write("salut");');
+    const result = await runApplication([root], `node "${path.basename(script)}"`, { wait: true });
+    expect(result.ok).toBe(true);
+    expect(result.summary).toContain('salut');
+  });
+
+  it('accepts a long command line with many arguments', async () => {
+    const args = Array.from({ length: 60 }, (_, i) => `mot${i}=valeur-${i}`).join(' ');
+    const result = await runApplication([root], `node --eval "process.exit(0)" ${args}`, { wait: true });
+    expect(result.ok).toBe(true);
+    expect(result.summary).toContain('Code de sortie : 0');
   });
 
   it('refuses shell metacharacters', async () => {

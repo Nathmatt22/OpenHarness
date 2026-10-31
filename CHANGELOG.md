@@ -26,6 +26,12 @@
 - Fixed the assistant answer appearing twice: the accumulated stream was never cleared and was rendered on top of the persisted message. The in-flight answer is now a single bubble that grows during streaming, then becomes the persisted message.
 - Stream handling moved to refs so event handlers always target the active conversation; the realtime subscription is established once instead of on every conversation switch.
 
+## 0.3.3 - Scroll corrigé, outils plus tolérants
+
+- **Scroll réparé** : en fenêtre agrandie, le tchat d'équipe était clippé sans ascenseur (ligne de grille implicite qui s'étirait). Les rangées de la grille sont clampées (`minmax(0, 1fr)`) et le chat solo retrouve son auto-scroll (le ref de scroll pointe désormais sur un élément avec une boîte, pas un `display: contents`).
+- **Chemins plus tolérants** : `..` est accepté tant que la cible résolue reste dans le dossier assigné (vérification lexicale + realpath). Les décorations autour des chemins (backticks, guillemets, puces markdown, gras) sont ignorées ; les marqueurs d'action enrobés dans du markdown (`- **WRITE**: \`fichier\` | contenu`) sont reconnus et dédoublonnés.
+- **RUN plus tolérant** : commandes jusqu'à 2000 caractères (au lieu de 512), guillemets autorisés autour des chemins de fichiers (les quotes restent de la syntaxe shell, pas une infraction), `RUN` possible même quand la mission n'a aucun dossier assigné (programme du PATH), programmes relatifs `./outils/x.bat` résolus depuis le dossier de travail du RUN, et fin de phrase décorative tolérée (`RUN: node --version.`).
+
 ## 0.3.2 - Live agent activity
 
 - The interface now shows what agents are doing in real time: a pulsing badge (`Alpha réfléchit…`, `Alpha lit les dossiers…`, `écrit un fichier…`, `crée un dossier…`, `supprime…`, `lance une application…`) attached to the streaming bubble in team chat, and a placeholder while the first agent warms up.

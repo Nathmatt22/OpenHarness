@@ -223,7 +223,7 @@ export default function App() {
         )}
 
         {page === 'chat' && mode === 'solo' && (
-          <div className="chat-outer" ref={scrollRef} style={{ display: 'contents' }}>
+          <div className="chat-outer" style={{ display: 'contents' }}>
             <ChatView
               agent={currentAgent}
               messages={messages}
@@ -238,6 +238,7 @@ export default function App() {
               connectionId={currentConnection?.id ?? ''}
               onConnectionChange={setConnectionId}
               hasConnections={data.connections.length > 0}
+              scrollRef={scrollRef}
               t={t}
             />
           </div>

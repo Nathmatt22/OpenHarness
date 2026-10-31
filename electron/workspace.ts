@@ -38,20 +38,6 @@ export class PolicyError extends Error {}
 function fail(message: string): never { throw new PolicyError(message); }
 const isPolicy = (e: unknown) => e instanceof PolicyError;
 
-/** Resolve a candidate path and verify it stays inside the given root (symlink-safe). */
-function resolveInside(root: string, candidate: string): string {
-  let real: string;
-  let realRoot: string;
-  try {
-    real = fs.realpathSync.native(candidate);
-    realRoot = fs.realpathSync.native(root);
-  } catch {
-    return ''; // path does not exist under this root
-  }
-  if (real !== realRoot && !real.startsWith(realRoot + path.sep)) fail('Chemin hors des dossiers assignés.');
-  return real;
-}
-
 /** Deepest existing ancestor of a (possibly not yet existing) path, symlinks resolved. */
 function existingAncestor(candidate: string): string {
   let current = candidate;
@@ -63,11 +49,16 @@ function existingAncestor(candidate: string): string {
 
 /**
  * Verify a write target (which may not exist yet) stays inside the writable
- * root: the deepest existing ancestor is resolved through symlinks and checked
- * against the real root, so a symlinked component cannot smuggle a path out.
+ * root. Tolerant to `..`: the lexical target must resolve inside the root, and
+ * the deepest existing ancestor is re-checked through symlinks, so a symlinked
+ * component cannot smuggle a path out.
  */
 function resolveForWrite(root: string, candidate: string): string {
   const realRoot = fs.realpathSync.native(root);
+  const lexical = path.resolve(candidate);
+  if (lexical !== realRoot && !lexical.startsWith(realRoot + path.sep)) {
+    fail('Chemin hors des dossiers en écriture.');
+  }
   const anchor = existingAncestor(candidate);
   if (!anchor || (anchor !== realRoot && !anchor.startsWith(realRoot + path.sep))) {
     fail('Chemin hors des dossiers en écriture.');
@@ -75,14 +66,45 @@ function resolveForWrite(root: string, candidate: string): string {
   return candidate;
 }
 
-/** Clean a model-supplied relative path: no absolute, no traversal, no control characters. */
+/**
+ * Clean a model-supplied relative path. Deliberately tolerant: decorated
+ * markers (backticks, quotes), trailing punctuation and dots are stripped, and
+ * a `..` is allowed as long as the resolved target stays inside the assigned
+ * root — only escapes are refused.
+ */
 function cleanRelative(relative: string): string {
-  const clean = String(relative || '').trim();
-  if (!clean || clean.includes('..') || path.isAbsolute(clean) || /^[\\/]/.test(clean)
-    || /[<>"|\u0000-\u001f]/.test(clean)) {
-    fail('Chemin de fichier invalide.');
+  let clean = String(relative || '').trim();
+  // Strip decorations models like to add around paths.
+  clean = clean.replace(/^[`'"<{(\[]+/, '').replace(/[`'"<>)\],.;:!]+$/, '').trim();
+  if (!clean || /[<>"|\u0000-\u001f]/.test(clean)) fail('Chemin de fichier invalide.');
+  // Absolute paths and drive letters are refused outright.
+  if (path.isAbsolute(clean) || /^[\\/]/.test(clean) || /^[a-zA-Z]:[\\/]/.test(clean)) {
+    fail('Chemin hors des dossiers assignés.');
   }
   return clean;
+}
+
+/**
+ * Resolve `candidate` under `root`, allowing `..` as long as the final target
+ * stays inside the root. Symlinks are re-checked through the real filesystem
+ * when the lexical check passes but the leaf does not exist yet.
+ */
+function resolveTolerant(root: string, candidate: string, realRoot: string): string {
+  const joined = path.resolve(root, candidate);
+  if (joined !== realRoot && !joined.startsWith(realRoot + path.sep)) {
+    fail('Chemin hors des dossiers assignés.');
+  }
+  try {
+    const real = fs.realpathSync.native(joined);
+    if (real !== realRoot && !real.startsWith(realRoot + path.sep)) {
+      fail('Chemin hors des dossiers assignés.');
+    }
+    return real;
+  } catch {
+    // Leaf (or part of the path) does not exist yet: the lexical check above
+    // already guaranteed confinement of the existing prefix.
+    return joined;
+  }
 }
 
 export function listWorkspace(folders: string[]): { folder: string; entries: WorkspaceEntry[] }[] {
@@ -105,8 +127,17 @@ export function listWorkspace(folders: string[]): { folder: string; entries: Wor
 export function readWorkspaceFile(folders: string[], relative: string): string {
   const clean = cleanRelative(relative);
   for (const root of folders) {
-    const real = resolveInside(root, path.resolve(root, clean));
-    if (!real) continue; // not under this root; try the next assigned folder
+    let real = '';
+    try {
+      const realRoot = fs.realpathSync.native(root);
+      const candidate = resolveTolerant(root, clean, realRoot);
+      real = fs.realpathSync.native(candidate);
+      if (real !== realRoot && !real.startsWith(realRoot + path.sep)) continue; // not under this root
+    } catch (e) {
+      if (isPolicy(e)) throw e; // explicit policy refusal: no fallback
+      continue;                 // not resolvable under this root: try the next
+    }
+    if (!fs.existsSync(real)) continue; // try the next assigned folder
     const stat = fs.statSync(real);
     if (stat.isDirectory()) fail('La cible est un dossier, pas un fichier.');
     if (stat.size > MAX_FILE_BYTES) fail(`Fichier trop volumineux (${Math.round(stat.size / 1024)} Ko, max 64 Ko).`);
@@ -139,14 +170,25 @@ export function deleteWorkspaceEntry(folders: string[], writable: Set<string>, r
   if (!writable.size) fail('Aucun dossier en écriture pour cette équipe.');
   for (const root of folders) {
     if (!writable.has(root)) continue;
-    const target = resolveInside(root, path.resolve(root, clean));
-    if (!target) continue;
-    if (target === fs.realpathSync.native(root)) fail('Impossible de supprimer la racine du dossier.');
-    if (fs.statSync(target).isDirectory()) {
-      fs.rmdirSync(target); // refuses when not empty: no recursive destruction
+    let real = '';
+    let realRoot = '';
+    try {
+      realRoot = fs.realpathSync.native(root);
+      const candidate = resolveTolerant(root, clean, realRoot);
+      if (candidate === realRoot) fail('Impossible de supprimer la racine du dossier.');
+      real = fs.realpathSync.native(candidate);
+      if (real !== realRoot && !real.startsWith(realRoot + path.sep)) continue; // not under this root
+    } catch (e) {
+      if (isPolicy(e)) throw e; // explicit policy refusal: no fallback
+      continue;                 // not resolvable under this root: try the next
+    }
+    if (!fs.existsSync(real)) continue;
+    if (real === realRoot) fail('Impossible de supprimer la racine du dossier.');
+    if (fs.statSync(real).isDirectory()) {
+      fs.rmdirSync(real); // refuses when not empty: no recursive destruction
       return `dossier supprimé`;
     }
-    fs.unlinkSync(target);
+    fs.unlinkSync(real);
     return 'fichier supprimé';
   }
   fail('Fichier introuvable dans les dossiers en écriture.');
@@ -205,13 +247,16 @@ function splitCommand(raw: string): string[] {
 }
 
 /**
- * Resolve the program to launch: a bare name (resolved on PATH) or a path
- * inside the assigned folders.
+ * Resolve the program to launch: a bare name (resolved on PATH), or a path
+ * inside the assigned folders. Tolerant to `..` as long as the resolved file
+ * stays inside an assigned folder. `runCwd` (when provided) is tried first for
+ * relative programs, so `./tools/x.bat` matches the folder the agent runs in.
  */
-function resolveProgram(program: string, folders: string[]): string {
+function resolveProgram(program: string, folders: string[], runCwd?: string): string {
   const absolute = path.isAbsolute(program) || /^[a-zA-Z]:[\\/]/.test(program);
   if (absolute || program.includes('/') || program.includes('\\')) {
-    for (const root of folders) {
+    const bases = runCwd ? [runCwd, ...folders] : folders;
+    for (const root of bases) {
       let real = '';
       try { real = fs.realpathSync.native(path.resolve(root, program)); } catch { continue; }
       const realRoot = fs.realpathSync.native(root);
@@ -239,19 +284,22 @@ function resolveProgram(program: string, folders: string[]): string {
 /**
  * Refuse arguments that look like filesystem paths escaping the assigned
  * folders: `node ../prive/evil.js` must not launder an out-of-root read.
- * Paths inside the folders are fine; bare tokens (flags, urls, names) pass.
+ * Paths inside the folders are fine (explicit `./`, `../`, `/x` forms are
+ * resolved against each root); bare tokens (flags, urls, package names) pass.
  */
 function assertArgsInsideFolders(args: string[], folders: string[]): void {
   for (const arg of args) {
-    const looksLikePath = /^[a-zA-Z]:[\\/]/.test(arg) || arg.startsWith('/') || arg.startsWith('\\')
-      || arg.startsWith('./') || arg.startsWith('.\\') || arg.startsWith('../') || arg.startsWith('..\\');
+    const looksLikePath = /^[a-zA-Z]:[\\/]/.test(arg) || arg.startsWith('/')
+      || arg.startsWith('\\') || arg.startsWith('./') || arg.startsWith('.\\')
+      || arg.startsWith('../') || arg.startsWith('..\\') || arg === '.' || arg === '..';
     if (!looksLikePath) continue;
     let inside = false;
     for (const root of folders) {
-      let real = '';
-      try { real = fs.realpathSync.native(path.resolve(root, arg)); } catch { continue; }
-      const realRoot = fs.realpathSync.native(root);
-      if (real === realRoot || real.startsWith(realRoot + path.sep)) { inside = true; break; }
+      try {
+        const realRoot = fs.realpathSync.native(root);
+        const real = fs.realpathSync.native(path.resolve(root, arg));
+        if (real === realRoot || real.startsWith(realRoot + path.sep)) { inside = true; break; }
+      } catch { continue; } // not an existing path under this root
     }
     if (!inside) fail('Argument de commande hors des dossiers assignés.');
   }
@@ -260,13 +308,14 @@ function assertArgsInsideFolders(args: string[], folders: string[]): void {
 /** RUN working directory: the requested subfolder of an assigned folder, else the first folder. */
 function resolveRunCwd(folders: string[], cwd?: string): string {
   const first = folders[0];
-  if (!cwd) return first;
+  if (!cwd || !folders.length) return first;
   const clean = cleanRelative(cwd);
   for (const root of folders) {
-    const real = resolveInside(root, path.resolve(root, clean));
-    if (real) {
-      try { if (fs.statSync(real).isDirectory()) return real; } catch { return first; }
-    }
+    try {
+      const realRoot = fs.realpathSync.native(root);
+      const real = resolveTolerant(root, clean, realRoot); // `..` allowed while staying inside
+      if (fs.existsSync(real) && fs.statSync(real).isDirectory()) return real;
+    } catch { continue; } // refused or invalid for this root: try the next one
   }
   return first;
 }
@@ -284,17 +333,15 @@ export async function runApplication(
 ): Promise<RunResult> {
   const raw = String(command || '').trim();
   if (!raw) fail('Commande RUN vide.');
-  if (raw.length > 512) fail('Commande RUN trop longue (512 caractères max).');
-  if (raw.includes('..')) fail('Commande RUN invalide.');
-  if (/[&|;<>\r\n`]/.test(raw.replace(/"[^"]*"/g, ''))) fail('Caractères de shell interdits dans RUN.');
+  if (raw.length > 2000) fail('Commande RUN trop longue (2000 caractères max).');
+  if (/[&|;<>`\r\n$]/.test(raw)) fail('Caractères de shell interdits dans RUN.');
 
   const parts = splitCommand(raw);
   const program = parts[0];
   if (!program) fail('Commande RUN vide.');
-  if (!folders.length) fail('Aucun dossier assigné à cette équipe.');
   if (parts.length > 1) assertArgsInsideFolders(parts.slice(1), folders);
-  const resolved = resolveProgram(program, folders);
   const cwd = resolveRunCwd(folders, opts.cwd);
+  const resolved = resolveProgram(program, folders, cwd);
   // .bat/.cmd need cmd.exe; everything else runs directly (no shell injection surface).
   const useShell = process.platform === 'win32' && /\.(bat|cmd)$/i.test(resolved);
 
@@ -354,26 +401,73 @@ export interface ParsedRequest {
 const REQUEST_LINE = /^[ \t]*(READ|WRITE|DELETE|MKDIR|RUN_WAIT|RUN):[ \t]+(.+?)[ \t]*$/gim;
 const TRAILING_TAG = /^(.*?)\s*\|\s*([A-Za-z0-9-]{1,64})$/;
 
+/** Strip the decorations models like to wrap markers in (quotes, backticks, list bullets, bold). */
+function unwrapDecorations(raw: string): string {
+  let value = raw.trim();
+  for (let i = 0; i < 4; i++) {
+    const before = value;
+    value = value
+      .replace(/^[-*•\d.)\s]*\s*/, '')      // "- item", "1. item", "• item"
+      .replace(/^[*_~`]+/, '')               // bold/italic/code openers
+      .replace(/[*_~`]+$/, '')
+      .replace(/^["'«»“”]+/, '')             // quotes
+      .replace(/["'«»“”]+$/, '')
+      .replace(/^(?:READ|WRITE|DELETE|MKDIR|RUN_WAIT|RUN)[:：]\s*/i, '')
+      .trim();
+    if (value === before) break;
+  }
+  return value;
+}
+
 function parseRequestLine(action: string, raw: string): ParsedRequest {
+  // RUN / RUN_WAIT carry a full command line: quotes are shell syntax, keep them.
+  if (action === 'RUN' || action === 'RUN_WAIT') {
+    // Strip a trailing sentence terminator or stray wrapping backtick only when
+    // quotes stay balanced; an unbalanced quote means the `"` was shell syntax.
+    let command = raw.trim().replace(/[.!?,;:]+$/u, '').replace(/`+$/, '').trim();
+    if ((command.match(/"/g) || []).length % 2 === 1) command = raw.trim();
+    const m = TRAILING_TAG.exec(command);
+    if (m) return { action, path: m[1].trim(), content: '', tag: m[2] };
+    return { action, path: command.trim(), content: '' };
+  }
   // WRITE keeps everything after the first `|` as content (pipes allowed inside);
   // every other action treats a trailing `|tag` segment as the caller tag.
   if (action === 'WRITE') {
     const idx = raw.indexOf('|');
-    if (idx === -1) return { action, path: raw, content: '' };
-    return { action, path: raw.slice(0, idx).trim(), content: raw.slice(idx + 1).replace(/^ /, '') };
+    if (idx === -1) return { action, path: unwrapDecorations(raw), content: '' };
+    return { action, path: unwrapDecorations(raw.slice(0, idx).trim()), content: raw.slice(idx + 1).replace(/^ /, '') };
   }
   const m = TRAILING_TAG.exec(raw);
-  if (m) return { action, path: m[1].trim(), content: '', tag: m[2] };
-  return { action, path: raw, content: '' };
+  if (m) return { action, path: unwrapDecorations(m[1].trim()), content: '', tag: m[2] };
+  return { action, path: unwrapDecorations(raw), content: '' };
 }
 
 /** Extract action requests from model output, in document order, bounded. */
-export function parseWorkspaceRequests(content: string, limit = 6): ParsedRequest[] {
+export function parseWorkspaceRequests(content: string, limit = 8): ParsedRequest[] {
   const requests: ParsedRequest[] = [];
   for (const match of content.matchAll(REQUEST_LINE)) {
     const raw = match[2].replace(/\r$/, '').trim();
     if (!raw) continue;
     requests.push(parseRequestLine(match[1].toUpperCase(), raw));
+  }
+  // Tolerant pass: markers wrapped in markdown decorations (bold, code spans,
+  // quotes, bullets) are still honored — the model should not lose its write
+  // because it pretty-printed the marker.
+  const seen = new Set(requests.map((r) => `${r.action}:${r.path}`));
+  if (requests.length < limit) {
+    for (const match of content.matchAll(/(?:^|\n)[^\n]*?\b(READ|WRITE|DELETE|MKDIR|RUN_WAIT|RUN)[`*_~'"]*[:：][ \t]+([^\n]+)/g)) {
+      // Decorations are judged outside the keyword itself (RUN_WAIT contains `_`).
+      const decorated = /[`*_~"'«»“”]|\d+\.\s/.test(match[0].replace(/(READ|WRITE|DELETE|MKDIR|RUN_WAIT|RUN)[`*_~'"]*[:：]/i, ''));
+      if (!decorated) continue; // plain full-line markers are handled above
+      const rest = match[2].trim();
+      if (!rest) continue;
+      const request = parseRequestLine(match[1].toUpperCase(), rest);
+      const key = `${request.action}:${request.path}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      requests.push(request);
+      if (requests.length >= limit) break;
+    }
   }
   return requests.slice(0, limit);
 }

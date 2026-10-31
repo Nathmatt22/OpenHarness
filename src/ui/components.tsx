@@ -119,10 +119,12 @@ export function Topbar({ agent, connection, page, mode, t }: { agent?: Agent; co
   );
 }
 
-export function ChatView({ agent, messages, streaming, busy, error, text, setText, onSend, onStop, connections, connectionId, onConnectionChange, hasConnections, t } : {
+export function ChatView({ agent, messages, streaming, busy, error, text, setText, onSend, onStop, connections, connectionId, onConnectionChange, hasConnections, scrollRef, t } : {
   agent?: Agent; messages: ChatMessage[]; streaming: string; busy: boolean; error: string;
   text: string; setText: (t: string) => void; onSend: () => void; onStop: () => void;
-  connections: Connection[]; connectionId: string; onConnectionChange: (id: string) => void; hasConnections: boolean; t: TFunction;
+  connections: Connection[]; connectionId: string; onConnectionChange: (id: string) => void; hasConnections: boolean;
+  scrollRef?: React.RefObject<HTMLElement>;
+  t: TFunction;
 }) {
   // The in-flight assistant answer is the streaming text itself, rendered as the
   // last bubble. No separate placeholder bubble and no extra streaming bubble:
@@ -133,7 +135,7 @@ export function ChatView({ agent, messages, streaming, busy, error, text, setTex
     : messages.filter((m) => !(m.role === 'assistant' && m.content === ''));
   const empty = !visible.length;
   return (
-    <section className="chat-view">
+    <section className="chat-view" ref={scrollRef}>
       <div className="messages">
         {empty ? (
           <Welcome t={t} />
