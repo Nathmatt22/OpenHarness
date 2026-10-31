@@ -16,7 +16,8 @@
     "@getpapillon/papicons": "^0.2.3",
     "better-sqlite3": "^11.8.1",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-native-svg": "file:vendor/react-native-svg-stub"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

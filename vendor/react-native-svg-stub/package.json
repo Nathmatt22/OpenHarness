@@ -1,0 +1,6 @@
+{
+  "name": "react-native-svg",
+  "version": "15.16.0",
+  "description": "Local stub. @getpapillon/papicons' web build renders plain React SVG elements and never imports react-native-svg; the stub only prevents npm from pulling the react-native dependency tree.",
+  "main": "index.js"
+}
