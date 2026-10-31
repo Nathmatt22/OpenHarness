@@ -55,8 +55,11 @@ function existingAncestor(candidate: string): string {
  */
 function resolveForWrite(root: string, candidate: string): string {
   const realRoot = fs.realpathSync.native(root);
+  // Lexical check against the root as given: on Windows a short (8.3) root
+  // path would never prefix-match its own long realpath form.
+  const lexicalRoot = path.resolve(root);
   const lexical = path.resolve(candidate);
-  if (lexical !== realRoot && !lexical.startsWith(realRoot + path.sep)) {
+  if (lexical !== lexicalRoot && !lexical.startsWith(lexicalRoot + path.sep)) {
     fail('Chemin hors des dossiers en écriture.');
   }
   const anchor = existingAncestor(candidate);
@@ -91,7 +94,10 @@ function cleanRelative(relative: string): string {
  */
 function resolveTolerant(root: string, candidate: string, realRoot: string): string {
   const joined = path.resolve(root, candidate);
-  if (joined !== realRoot && !joined.startsWith(realRoot + path.sep)) {
+  // Lexical check against the root as given (same short/long form as `joined`),
+  // then symlink check through the real filesystem against the resolved root.
+  const lexicalRoot = path.resolve(root);
+  if (joined !== lexicalRoot && !joined.startsWith(lexicalRoot + path.sep)) {
     fail('Chemin hors des dossiers assignés.');
   }
   try {
