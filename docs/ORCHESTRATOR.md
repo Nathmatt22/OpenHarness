@@ -12,7 +12,11 @@ Resolution is confined by construction: requests must be relative, `..` and abso
 
 Team chat (`teamchat:*` channels, `src/ui/TeamChatView.tsx`) is a persistent shared conversation attached to a team (`conversations.team_id`): the user's message is stored once, then each roster agent runs a turn against the same history (`messages.agent_id` attributes every answer). The mention selector reorders the roster to answer first. The turn engine (`runAgentTurn`) and the workspace instructions (`buildWorkspaceContext`) are the same ones missions use, so folder capabilities behave identically; the internal tool-result messages are persisted for the model but filtered out of the rendered thread. One generation runs at a time per team conversation (`teamchat:stop` aborts it).
 
-Live activity: the turn engine emits `agent:activity` events (`thinking`, `reading`, `writing`, `creating`, `deleting`, `running`, `queued`, `idle`) keyed by conversation and mission id; the renderer keeps a per-conversation map and renders a pulsing badge next to the streaming bubble (team chat) or the running status (missions).
+## Virtual machine environments
+
+When a team has a virtual machine assigned (`teams.virtual_machine` → `virtual_machines`), the first message also carries the VM intro (`buildVmContext`): the machine name, its current root listing and the `VM_*` marker how-to. VM actions are dispatched by `performVmAction` (main process, `electron/vm.ts`) inside `userData/vm-environments/<id>` with the same confinement rules as the assigned folders; `VM_RUN`/`VM_RUN_WAIT` additionally require the team-level `vm_allow_run` toggle. The machine's web desktop (`vme:open`) opens in a dedicated window; the desktop page is regenerated on each intro so shortcuts stay in sync. See `docs/VME.md`.
+
+Live activity: the turn engine emits `agent:activity` events (`thinking`, `reading`, `writing`, `creating`, `deleting`, `running`, `vm`, `queued`, `idle`) keyed by conversation and mission id; the renderer keeps a per-conversation map and renders a pulsing badge next to the streaming bubble (team chat) or the running status (missions).
 
 ## Scope
 

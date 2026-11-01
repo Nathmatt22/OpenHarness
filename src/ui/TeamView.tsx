@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { PapIcon } from './icons';
-import { Team, WorkspaceListing, api } from './types';
+import { Team, Vme, WorkspaceListing, api } from './types';
 import { parseFolderFlags } from '../../shared/workspace-flags';
 import { ActivityBadge } from './TeamChatView';
 import type { Activity } from './hooks';
 import type { TFunction } from './i18n';
 
-export function TeamView({ teams, agents, missionRunning, events, setEvents, missionDone, missionId, activities, t } : {
-  teams: Team[]; agents: any[]; missionRunning: boolean; events: any[]; setEvents: (fn: (prev: any[]) => any[]) => void; missionDone: string; missionId: string;
+export function TeamView({ teams, agents, vmes, missionRunning, events, setEvents, missionDone, missionId, activities, t } : {
+  teams: Team[]; agents: any[]; vmes?: Vme[]; missionRunning: boolean; events: any[]; setEvents: (fn: (prev: any[]) => any[]) => void; missionDone: string; missionId: string;
   activities?: Record<string, { agentId?: string; activity: Activity }>; t: TFunction;
 }) {
   const [teamId, setTeamId] = useState('');
@@ -19,6 +19,8 @@ export function TeamView({ teams, agents, missionRunning, events, setEvents, mis
   const { folders, writable } = parseFolderFlags(
     selectedTeam?.folders ? (JSON.parse(selectedTeam.folders) as string[]) : []
   );
+  // The machine assigned to the selected team (undefined when the team has none).
+  const teamVme = (vmes || []).find((v) => v.id === selectedTeam?.virtual_machine);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,6 +83,35 @@ export function TeamView({ teams, agents, missionRunning, events, setEvents, mis
                         {l.entries.map((e) => e.name).join(' · ') || t('team.emptyFolder')}
                       </div>
                     ))}
+                  </div>
+                )}
+              </div>
+              <div className="workspace-box">
+                <div className="workspace-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <PapIcon name="monitor" size={12} /> {t('team.vmTitle')}
+                </div>
+                {!teamVme ? (
+                  <div className="workspace-list">{t('team.noVme')}</div>
+                ) : (
+                  <div className="workspace-list">
+                    <div>
+                      <span className="f">{teamVme.name} · {t('team.vmReady')}</span>
+                      <span title={teamVme.path}>{teamVme.path.length > 42 ? `…${teamVme.path.slice(-40)}` : teamVme.path}</span>
+                    </div>
+                    {teamVme.pages.length > 0 && (
+                      <div>{t('set.vmePages').split(' (')[0]} : {teamVme.pages.map((p) => p.label).join(' · ')}</div>
+                    )}
+                    <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                      <button className="btn btn-ghost" style={{ padding: '5px 10px', fontSize: 12 }} onClick={() => void api()('vme:open', { id: teamVme.id })}>
+                        <PapIcon name="monitor" size={13} /> {t('team.vmOpen')}
+                      </button>
+                      {teamVme.pages.length > 0 && (
+                        <button className="btn btn-ghost" style={{ padding: '5px 10px', fontSize: 12 }} onClick={() => void api()('vme:open', { id: teamVme.id, page: 0 })}>
+                          <PapIcon name="globe" size={13} /> {t('team.vmWeb')}
+                        </button>
+                      )}
+                    </div>
+                    <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--text-3)' }}>{t('team.vmHint')}</div>
                   </div>
                 )}
               </div>

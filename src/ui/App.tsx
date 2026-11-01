@@ -192,6 +192,7 @@ export default function App() {
           <TeamView
             teams={data.teams}
             agents={data.agents}
+            vmes={data.vmes}
             missionRunning={realtime.missionRunning}
             events={realtime.events}
             setEvents={realtime.setEvents}
@@ -206,6 +207,7 @@ export default function App() {
           <TeamChatView
             teams={data.teams}
             agents={data.agents}
+            vmes={data.vmes}
             teamConversations={teamConversations}
             activeId={teamConvId}
             onActive={activateTeamConv}

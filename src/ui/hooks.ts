@@ -28,7 +28,7 @@ export function useLang(data: any) {
 
 export function useAppData() {
   const [data, setData] = useState({
-    agents: [], connections: [], conversations: [], teams: [], endpoints: undefined, encryptionAvailable: true
+    agents: [], connections: [], conversations: [], teams: [], vmes: [], endpoints: undefined, encryptionAvailable: true
   } as any);
   const [loadError, setLoadError] = useState('');
   const refresh = async () => {
@@ -47,7 +47,7 @@ export function useTheme() {
   return { light, toggle: () => setLight(l => !l) };
 }
 
-export type Activity = 'thinking' | 'reading' | 'writing' | 'creating' | 'deleting' | 'running' | 'queued' | 'idle';
+export type Activity = 'thinking' | 'reading' | 'writing' | 'creating' | 'deleting' | 'running' | 'vm' | 'queued' | 'idle';
 
 export function useRealtime(onDelta: (d: any) => void, onChatError: (e: any) => void) {
   const [missionId, setMissionId] = useState('');

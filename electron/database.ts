@@ -10,6 +10,7 @@ export function initDatabase() {
     CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY,title TEXT,agent_id TEXT,connection_id TEXT,created_at TEXT);
     CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,conversation_id TEXT,role TEXT,content TEXT,created_at TEXT);
     CREATE TABLE IF NOT EXISTS teams(id TEXT PRIMARY KEY,name TEXT,agent_ids TEXT,created_at TEXT);
+    CREATE TABLE IF NOT EXISTS virtual_machines(id TEXT PRIMARY KEY,name TEXT,team_id TEXT,pages TEXT,created_at TEXT);
     CREATE TABLE IF NOT EXISTS missions(id TEXT PRIMARY KEY,team_id TEXT,title TEXT,status TEXT,result TEXT,created_at TEXT);
     CREATE TABLE IF NOT EXISTS mission_events(id TEXT PRIMARY KEY,mission_id TEXT,agent_id TEXT,content TEXT,created_at TEXT);
     CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);`);
@@ -33,6 +34,12 @@ function migrate(database: Database.Database) {
   }
   if (!columns('messages').some((c) => c.name === 'agent_id')) {
     database.exec('ALTER TABLE messages ADD COLUMN agent_id TEXT');
+  }
+  if (!columns('teams').some((c) => c.name === 'virtual_machine')) {
+    database.exec('ALTER TABLE teams ADD COLUMN virtual_machine TEXT');
+  }
+  if (!columns('teams').some((c) => c.name === 'vm_allow_run')) {
+    database.exec('ALTER TABLE teams ADD COLUMN vm_allow_run INTEGER DEFAULT 0');
   }
 }
 export function database() { if (!db) throw new Error('Database not initialized'); return db; }

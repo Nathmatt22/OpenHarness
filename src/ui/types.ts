@@ -2,9 +2,12 @@ export interface Agent { id: string; name: string; description: string; instruct
 export interface Connection { id: string; name: string; type: string; base_url: string; model: string; created_at: string; }
 export interface Conversation { id: string; title: string; agent_id: string; connection_id: string | null; team_id?: string | null; created_at: string; }
 export interface ChatMessage { id: string; role: string; content: string; agent_id?: string | null; created_at?: string; }
-export interface Team { id: string; name: string; agent_ids: string; folders: string | null; allow_run?: number; created_at: string; }
+export interface Team { id: string; name: string; agent_ids: string; folders: string | null; allow_run?: number; virtual_machine?: string | null; vm_allow_run?: number; created_at: string; }
 export interface WorkspaceEntry { name: string; type: 'file' | 'folder'; size?: number; }
 export interface WorkspaceListing { folder: string; entries: WorkspaceEntry[]; }
+export interface VmPage { label: string; url: string; }
+/** A virtual machine environment (PC virtuel) usable by one team. */
+export interface Vme { id: string; name: string; teamId: string | null; pages: VmPage[]; created_at: string; path: string; ready: boolean; }
 export interface MissionEvent { missionId: string; agentId: string; content: string; created_at?: string; }
 export interface Endpoints { claude: string; openai: string; }
 
@@ -13,6 +16,7 @@ export interface AppData {
   connections: Connection[];
   conversations: Conversation[];
   teams: Team[];
+  vmes?: Vme[];
   settings: Record<string, string>;
   endpoints?: Endpoints;
   encryptionAvailable?: boolean;
@@ -32,7 +36,7 @@ export interface Invoke {
   (channel: 'chat:stop', data: { id: string }): Promise<boolean>;
   (channel: 'agent:save', data: { id?: string; name: string; description?: string; instructions: string }): Promise<{ id: string }>;
   (channel: 'agent:delete', data: { id: string }): Promise<boolean>;
-  (channel: 'team:save', data: { id?: string; name: string; agentIds: string[]; folders?: string[]; allowRun?: boolean }): Promise<{ id: string }>;
+  (channel: 'team:save', data: { id?: string; name: string; agentIds: string[]; folders?: string[]; allowRun?: boolean; virtualMachineId?: string; vmAllowRun?: boolean }): Promise<{ id: string }>;
   (channel: 'team:delete', data: { id: string }): Promise<boolean>;
   (channel: 'team:pickFolder'): Promise<string | null>;
   (channel: 'workspace:list', data: { teamId: string }): Promise<WorkspaceListing[]>;
@@ -41,6 +45,11 @@ export interface Invoke {
   (channel: 'workspace:delete', data: { teamId: string; relative: string }): Promise<string>;
   (channel: 'workspace:mkdir', data: { teamId: string; relative: string }): Promise<string>;
   (channel: 'workspace:run', data: { teamId: string; command: string; wait?: boolean; cwd?: string }): Promise<string>;
+  (channel: 'vme:create', data: { name: string; pages?: string[] }): Promise<{ id: string }>;
+  (channel: 'vme:list'): Promise<Vme[]>;
+  (channel: 'vme:delete', data: { id: string }): Promise<boolean>;
+  (channel: 'vme:open', data: { id: string; page?: number }): Promise<string>;
+  (channel: 'vme:files', data: { id: string; relative?: string }): Promise<WorkspaceEntry[]>;
   (channel: 'teamchat:create', data: { teamId: string; title?: string }): Promise<{ id: string }>;
   (channel: 'teamchat:list'): Promise<Conversation[]>;
   (channel: 'teamchat:messages', data: { id: string }): Promise<ChatMessage[]>;
@@ -57,6 +66,14 @@ export type Api = Invoke & { on: (channel: string, callback: (data: any) => void
 
 export function api(): Api {
   const bridge = (window as any).openharness;
+  if (!bridge) {
+    // No Electron bridge (e.g. the Android companion build): fail with a clear,
+    // localized-later message instead of a TypeError deep in the bridge call.
+    const call = ((_channel: string) =>
+      Promise.reject(new Error('Cette action nécessite l’application de bureau OpenHarness (aucun pont IPC ici).'))) as Api;
+    call.on = () => () => undefined;
+    return call;
+  }
   const call = ((channel: string, data?: unknown) => bridge.invoke(channel, data)) as Api;
   call.on = (channel: string, callback: (data: any) => void) => bridge.on(channel, callback);
   return call;

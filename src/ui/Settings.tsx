@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { PapIcon } from './icons';
-import { Agent, Connection, Endpoints, api } from './types';
+import { Agent, Connection, Endpoints, Vme, api } from './types';
 import { parseFolderFlags, encodeFolderFlags } from '../../shared/workspace-flags';
 import type { Lang, TFunction } from './i18n';
 
@@ -13,10 +13,13 @@ export function SettingsPage({ data, refresh, notice, setNotice, lang, onLangCha
   const [showAgentForm, setShowAgentForm] = useState(false);
   const [teamFolders, setTeamFolders] = useState<string[]>([]);
   const [teamAllowRun, setTeamAllowRun] = useState(false);
+  const [teamVme, setTeamVme] = useState('');
+  const [teamVmRun, setTeamVmRun] = useState(false);
   const endpoints: Endpoints | undefined = data.endpoints;
   const connectionFormRef = useRef<HTMLFormElement>(null);
   const teamFormRef = useRef<HTMLFormElement>(null);
   const agentFormRef = useRef<HTMLFormElement>(null);
+  const vmeFormRef = useRef<HTMLFormElement>(null);
   const noticeType = notice.startsWith('✓') ? '' : 'error';
 
   const save = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -53,13 +56,70 @@ export function SettingsPage({ data, refresh, notice, setNotice, lang, onLangCha
     const f = new FormData(form);
     const agentIds = data.agents.filter((a: Agent) => (f.getAll('agents') as string[]).includes(a.id)).map((a: Agent) => a.id);
     try {
-      await api()('team:save', { name: String(f.get('name') || ''), agentIds, folders: teamFolders, allowRun: teamAllowRun });
+      await api()('team:save', {
+        name: String(f.get('name') || ''), agentIds, folders: teamFolders, allowRun: teamAllowRun,
+        virtualMachineId: teamVme || undefined, vmAllowRun: teamVmRun
+      });
       teamFormRef.current?.reset();
       setTeamFolders([]);
       setTeamAllowRun(false);
+      setTeamVme('');
+      setTeamVmRun(false);
       await refresh();
       setNotice(t('set.savedTeam'));
     } catch (err) { setNotice(String(err instanceof Error ? err.message : err)); }
+  };
+
+  /** Create a virtual environment from the settings form. */
+  const createVme = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const f = new FormData(form);
+    const pages = String(f.get('pages') || '').split('\n').map((l) => l.trim()).filter(Boolean);
+    try {
+      await api()('vme:create', { name: String(f.get('name') || ''), pages });
+      vmeFormRef.current?.reset();
+      await refresh();
+      setNotice(t('set.savedVme'));
+    } catch (err) { setNotice(String(err instanceof Error ? err.message : err)); }
+  };
+
+  /** Rebind a team's virtual environment (settings list, one click). */
+  const setTeamVmeAssignment = async (teamId: string, virtualMachineId: string | null) => {
+    try {
+      const team = data.teams.find((t_: any) => t_.id === teamId);
+      if (!team) return;
+      await api()('team:save', {
+        id: team.id, name: team.name,
+        agentIds: JSON.parse(team.agent_ids) as string[],
+        folders: encodeFolderFlags(decodeFolders(team.folders), decodeWritable(team.folders)),
+        allowRun: team.allow_run === 1,
+        virtualMachineId: virtualMachineId || undefined,
+        vmAllowRun: team.vm_allow_run === 1
+      });
+      await refresh();
+    } catch (err) { setNotice(String(err instanceof Error ? err.message : err)); }
+  };
+
+  const toggleTeamVmRun = async (teamId: string) => {
+    try {
+      const team = data.teams.find((t_: any) => t_.id === teamId);
+      if (!team) return;
+      await api()('team:save', {
+        id: team.id, name: team.name,
+        agentIds: JSON.parse(team.agent_ids) as string[],
+        folders: encodeFolderFlags(decodeFolders(team.folders), decodeWritable(team.folders)),
+        allowRun: team.allow_run === 1,
+        virtualMachineId: team.virtual_machine || undefined,
+        vmAllowRun: team.vm_allow_run !== 1
+      });
+      await refresh();
+    } catch (err) { setNotice(String(err instanceof Error ? err.message : err)); }
+  };
+
+  const openVme = async (id: string, page?: number) => {
+    try { await api()('vme:open', { id, page }); }
+    catch (err) { setNotice(String(err instanceof Error ? err.message : err)); }
   };
 
   const pickTeamFolder = async () => {
@@ -86,7 +146,9 @@ export function SettingsPage({ data, refresh, notice, setNotice, lang, onLangCha
     await api()('team:save', {
       id: team.id, name: team.name,
       agentIds: JSON.parse(team.agent_ids) as string[], folders: stored,
-      allowRun: team.allow_run === 1
+      allowRun: team.allow_run === 1,
+      virtualMachineId: team.virtual_machine || undefined,
+      vmAllowRun: team.vm_allow_run === 1
     });
     await refresh();
   };
@@ -132,7 +194,9 @@ export function SettingsPage({ data, refresh, notice, setNotice, lang, onLangCha
         id: team.id, name: team.name,
         agentIds: JSON.parse(team.agent_ids) as string[],
         folders: encodeFolderFlags(decodeFolders(team.folders), decodeWritable(team.folders)),
-        allowRun: team.allow_run !== 1
+        allowRun: team.allow_run !== 1,
+        virtualMachineId: team.virtual_machine || undefined,
+        vmAllowRun: team.vm_allow_run === 1
       });
       await refresh();
     } catch (err) { setNotice(String(err instanceof Error ? err.message : err)); }
@@ -272,6 +336,36 @@ export function SettingsPage({ data, refresh, notice, setNotice, lang, onLangCha
                     {t('set.allowRunSub')}
                   </span>
                 </div>
+                {(data.vmes || []).length > 0 && (
+                  <div>
+                    <span className="field-label">{t('set.vmeTeam')}</span>
+                    <select
+                      className="field"
+                      value={teamVme}
+                      onChange={(e) => setTeamVme(e.target.value)}
+                    >
+                      <option value="">{t('set.vmeTeamNone')}</option>
+                      {(data.vmes as Vme[]).filter((v) => !v.teamId).map((v) => (
+                        <option key={v.id} value={v.id}>{v.name}</option>
+                      ))}
+                    </select>
+                    {teamVme && (
+                      <>
+                        <label className="check-item" style={{ marginTop: 8, display: 'flex' }}>
+                          <input
+                            type="checkbox"
+                            checked={teamVmRun}
+                            onChange={(e) => setTeamVmRun(e.target.checked)}
+                          />
+                          {t('set.vmeAllowRun')}
+                        </label>
+                        <span className="card-sub" style={{ fontSize: 10.5, display: 'block', marginTop: 4 }}>
+                          {t('set.vmeAllowRunSub')}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                )}
                 <div className="form-actions"><button className="btn btn-primary">{t('set.saveTeam')}</button></div>
               </form>
               {data.teams.map((t_: any) => {
@@ -310,12 +404,109 @@ export function SettingsPage({ data, refresh, notice, setNotice, lang, onLangCha
                       />
                       {t('set.allowRun')}
                     </label>
+                    {(data.vmes || []).length > 0 && (
+                      <div style={{ marginTop: 8 }}>
+                        <span className="field-label">{t('set.vmeTeam')}</span>
+                        <select
+                          className="select mini"
+                          value={t_.virtual_machine || ''}
+                          onChange={(e) => setTeamVmeAssignment(t_.id, e.target.value || null)}
+                        >
+                          <option value="">{t('set.vmeTeamNone')}</option>
+                          {(data.vmes as Vme[])
+                            .filter((v) => !v.teamId || v.id === t_.virtual_machine)
+                            .map((v) => (
+                              <option key={v.id} value={v.id}>{v.name}</option>
+                            ))}
+                        </select>
+                        {t_.virtual_machine && (
+                          <label className="check-item" style={{ marginTop: 6, display: 'flex' }}>
+                            <input
+                              type="checkbox"
+                              checked={t_.vm_allow_run === 1}
+                              onChange={() => toggleTeamVmRun(t_.id)}
+                            />
+                            {t('set.vmeAllowRun')}
+                          </label>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  <button className="text-btn" onClick={() => assignFolderToTeam(t_.id)}>{t('set.addFolder')}</button>
+                  <div style={{ display: 'grid', gap: 4, justifyItems: 'end' }}>
+                    <button className="text-btn" onClick={() => assignFolderToTeam(t_.id)}>{t('set.addFolder')}</button>
+                    {t_.virtual_machine && (
+                      <button className="text-btn" onClick={() => openVme(t_.virtual_machine)}>{t('set.openVme')}</button>
+                    )}
+                  </div>
                   <button className="text-btn danger" onClick={async () => { await api()('team:delete', { id: t_.id }); await refresh(); }}>{t('set.delete')}</button>
                 </div>
                 );
               })}
+            </div>
+
+            <div className="card">
+              <h2>{t('set.vme')}</h2>
+              <p className="card-sub">{t('set.vmeSub')}</p>
+              <form className="form" ref={vmeFormRef} onSubmit={createVme}>
+                <label>{t('set.vmeName')}
+                  <input className="field" name="name" required placeholder={t('set.vmeNamePlaceholder')} />
+                </label>
+                <label>{t('set.vmePages')}
+                  <textarea className="field" name="pages" rows={3} placeholder={t('set.vmePagesPlaceholder')} />
+                </label>
+                <div className="form-actions">
+                  <button className="btn btn-primary">{t('set.createVme')}</button>
+                </div>
+              </form>
+              <p className="card-sub" style={{ marginTop: 10 }}>{t('set.vmeHint')}</p>
+              <div className="connection-list">
+                {(data.vmes || []).length === 0 && <div className="history-empty">{t('set.noVme')}</div>}
+                {((data.vmes || []) as Vme[]).map((v) => {
+                  const owner = v.teamId ? data.teams.find((t_: any) => t_.id === v.teamId) : null;
+                  return (
+                    <div className="connection-row" key={v.id}>
+                      <div className="meta">
+                        <div className="name">
+                          <PapIcon name="monitor" size={13} /> {v.name}
+                          <span className={`status-chip ${v.ready ? 'ok' : ''}`}>
+                            {v.ready ? t('team.vmReady') : '…'}
+                          </span>
+                        </div>
+                        <div className="sub">
+                          {owner
+                            ? t('set.vmeAssignedTo', { team: owner.name })
+                            : t('set.vmeFree')}
+                          {' · '}
+                          <span title={v.path}>{t('set.vmePath')} {v.path.length > 46 ? `…${v.path.slice(-44)}` : v.path}</span>
+                        </div>
+                        {v.pages.length > 0 && (
+                          <div className="folder-chips" style={{ marginTop: 6 }}>
+                            {v.pages.map((p) => (
+                              <span className="folder-chip" key={p.url}>
+                                <PapIcon name="globe" size={12} />
+                                <span className="label">{p.label}</span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <button className="text-btn" onClick={() => openVme(v.id)}>{t('set.openVme')}</button>
+                      {v.pages.length > 0 && (
+                        <button className="text-btn" onClick={() => openVme(v.id, 0)}>{t('set.openVmePage')}</button>
+                      )}
+                      <button
+                        className="text-btn danger"
+                        disabled={!!v.teamId}
+                        title={v.teamId ? t('set.vmeAssignedTo', { team: owner?.name ?? '' }) : undefined}
+                        onClick={async () => {
+                          try { await api()('vme:delete', { id: v.id }); await refresh(); setNotice(t('set.deletedVme')); }
+                          catch (err) { setNotice(String(err instanceof Error ? err.message : err)); }
+                        }}
+                      >{t('set.delete')}</button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="card">

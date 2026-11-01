@@ -27,15 +27,16 @@ npm run typecheck
 npm run build
 npm run build:win
 npm run build:linux
+npm run build:android
 ```
 
-Windows and Linux packaging should be run on their respective OS. Release artifacts are placed in `release/`. A successful source build does not establish that both OS installers have been produced; confirm artifacts on each target runner.
+Windows and Linux packaging should be run on their respective OS; the Android companion builds anywhere (JDK 17 + Android SDK). Release artifacts are placed in `release/` (desktop) and `android/app/build/outputs/apk/debug/` (APK). A successful source build does not establish that all installers have been produced; confirm artifacts on each target runner.
 
 The Windows setup (`OpenHarness-Setup.exe`) is an assisted NSIS installer: it asks for the interface language (French/English, defaulting to the OS language), shows the license, lets the user pick per-user or per-machine installation with the installation directory, and can launch the app at the end. The application itself is bilingual with a language switch in Settings; the choice is stored locally and the OS language is used as the initial default.
 
 ## Current scope
 
-Included: isolated Electron renderer, validated IPC allowlist, local SQLite, OS-protected API keys, Anthropic and OpenAI-compatible streaming, ten built-in agents, custom agent creation, conversation history, saved teams, sequential real-provider team missions, real-time shared team chats (every agent answers in one persisted thread), mission events, cancellation plumbing, and per-team assigned folders with per-folder read/write capabilities during missions and team chats (`READ:`/`WRITE:`/`MKDIR:`/`DELETE:` request cycle with symlink-safe path confinement) plus optional application launching (`RUN:`/`RUN_WAIT:`) gated by a team-level switch.
+Included: isolated Electron renderer, validated IPC allowlist, local SQLite, OS-protected API keys, Anthropic and OpenAI-compatible streaming, ten built-in agents, custom agent creation, conversation history, saved teams, sequential real-provider team missions, real-time shared team chats (every agent answers in one persisted thread), mission events, cancellation plumbing, per-team assigned folders with per-folder read/write capabilities during missions and team chats (`READ:`/`WRITE:`/`MKDIR:`/`DELETE:` request cycle with symlink-safe path confinement), optional application launching (`RUN:`/`RUN_WAIT:`) gated by a team-level switch, and **team virtual environments**: an isolated per-team virtual PC (`VM_LS:`/`VM_READ:`/`VM_WRITE:`/`VM_MKDIR:`/`VM_DELETE:` plus `VM_RUN:`/`VM_RUN_WAIT:` behind a team toggle) with an openable web desktop and a host-restricted machine browser window. An Android companion APK (Capacitor) packages the same interface for mobile viewing; provider calls stay desktop-only.
 
 Not yet implemented: file attachment/content tools, undo/rollback of agent file writes, concurrent/dependency-aware scheduling, provider model discovery, custom-agent edit/duplicate/disable flows, mission resume/history UI, web-search tools, human approval gates, macOS notarization, and comprehensive end-to-end provider tests. The team workflow is sequential delegation, not a fully autonomous task-planning graph. No provider calls are mocked in the application.
 
@@ -55,6 +56,8 @@ Renderer has `contextIsolation`, `sandbox`, and `nodeIntegration: false`; preloa
 - [docs/PROVIDERS.md](docs/PROVIDERS.md)
 - [docs/AGENTS.md](docs/AGENTS.md)
 - [docs/ORCHESTRATOR.md](docs/ORCHESTRATOR.md)
+- [docs/VME.md](docs/VME.md) — environnements virtuels d'équipe (PC virtuel)
+- [docs/ANDROID.md](docs/ANDROID.md) — compagnon Android (Capacitor)
 
 ## License
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0 - Environnements virtuels d'équipe (PC virtuel) et build Android
+
+- **Environnements virtuels** : chaque équipe peut se voir assigner un PC virtuel (`Paramètres → Environnements virtuels`) : un espace de travail isolé dans les données protégées de l'application (`userData/vm-environments/<id>`, avec `Desktop/`, `Documents/`, `Downloads/`), un bureau web dédié (`bureau.html`, généré sans ressource externe) ouvert dans une fenêtre Electron séparée, et un navigateur de machine dont la navigation est restreinte aux raccourcis http(s) configurés (session persistante `persist:vme-<id>` par machine).
+- Les agents agissent dans la machine par marqueurs lignes complètes : `VM_LS`, `VM_READ`, `VM_WRITE` (512 Ko max, `\n`/`\t` échappés), `VM_MKDIR`, `VM_DELETE`, et `VM_RUN`/`VM_RUN_WAIT` derrière une bascule d'équipe dédiée (« Autoriser les commandes dans l'environnement virtuel ») ; résultats étiquetés (`VM_FILE_CONTENT`, `VM_WRITE_RESULT`, `VM_RUN_RESULT`…) renvoyés dans le même tour (3 tours, 8 actions/tour).
+- Confinement identique aux dossiers assignés : chemins relatifs obligatoires, `..` toléré tant que la cible résolue (lexique + realpath, liens symboliques) reste dans la machine, programmes du PATH ou chemins internes uniquement, arguments hors machine refusés, pas d'interprétation shell ; les refus remontent comme texte étiqueté, jamais de contenu externe.
+- Une machine n'appartient qu'à une équipe (assignation dans la carte Équipes, sélecteur + bascule commandes) ; la suppression d'une équipe détache sa machine (elle survit non assignée) et la suppression d'une machine assignée est refusée. Vue Équipe et tchat d'équipe affichent la machine et permettent d'ouvrir son bureau web.
+- Badge d'activité `vm` (« travaille dans l'environnement virtuel… ») et introduction VM dans missions et tchats d'équipe ; stockage dans une nouvelle table `virtual_machines` + colonnes `teams.virtual_machine`/`teams.vm_allow_run` (migration automatique).
+- Tests : 12 nouveaux tests (`electron/vm.test.ts`) couvrant le provisionnement, le confinement fichiers/commandes, la génération du bureau, le cycle de vie IPC (`vme:create/list/delete/open`) et l'usage réel par une mission (écriture dans la machine, refus de VM_RUN sans bascule, blocage de traversée).
+- **Build Android** : packaging Capacitor de la même interface (`capacitor.config.ts`, `android/`, `npm run build:android`) — APK compagnon de consultation ; les appels fournisseurs restent réservés au bureau (message clair sans pont IPC). La CI produit l'APK (ubuntu, JDK 17 + SDK Android) et le joint à la release GitHub aux côtés des installateurs Windows et Linux.
+
 ## 0.1.0 - Initial workspace implementation
 
 - Electron/React/TypeScript foundation and dark/light UI.

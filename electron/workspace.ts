@@ -403,8 +403,9 @@ export interface ParsedRequest {
   tag?: string;
 }
 
-/** Full-line action markers, in document order (first occurrence first). */
-const REQUEST_LINE = /^[ \t]*(READ|WRITE|DELETE|MKDIR|RUN_WAIT|RUN):[ \t]+(.+?)[ \t]*$/gim;
+/** Full-line action markers, in document order (first occurrence first).
+ *  The `VM_*` family targets the team's virtual environment (electron/vm.ts). */
+const REQUEST_LINE = /^[ \t]*(VM_RUN_WAIT|VM_RUN|VM_DELETE|VM_MKDIR|VM_WRITE|VM_READ|VM_LS|READ|WRITE|DELETE|MKDIR|RUN_WAIT|RUN):[ \t]+(.+?)[ \t]*$/gim;
 const TRAILING_TAG = /^(.*?)\s*\|\s*([A-Za-z0-9-]{1,64})$/;
 
 /** Strip the decorations models like to wrap markers in (quotes, backticks, list bullets, bold). */
@@ -426,8 +427,9 @@ function unwrapDecorations(raw: string): string {
 }
 
 function parseRequestLine(action: string, raw: string): ParsedRequest {
-  // RUN / RUN_WAIT carry a full command line: quotes are shell syntax, keep them.
-  if (action === 'RUN' || action === 'RUN_WAIT') {
+  // RUN / RUN_WAIT (and their VM_* twins) carry a full command line: quotes are
+  // shell syntax, keep them.
+  if (action === 'RUN' || action === 'RUN_WAIT' || action === 'VM_RUN' || action === 'VM_RUN_WAIT') {
     // Strip a trailing sentence terminator or stray wrapping backtick only when
     // quotes stay balanced; an unbalanced quote means the `"` was shell syntax.
     let command = raw.trim().replace(/[.!?,;:]+$/u, '').replace(/`+$/, '').trim();
@@ -438,7 +440,7 @@ function parseRequestLine(action: string, raw: string): ParsedRequest {
   }
   // WRITE keeps everything after the first `|` as content (pipes allowed inside);
   // every other action treats a trailing `|tag` segment as the caller tag.
-  if (action === 'WRITE') {
+  if (action === 'WRITE' || action === 'VM_WRITE') {
     const idx = raw.indexOf('|');
     if (idx === -1) return { action, path: unwrapDecorations(raw), content: '' };
     return { action, path: unwrapDecorations(raw.slice(0, idx).trim()), content: raw.slice(idx + 1).replace(/^ /, '') };
@@ -448,7 +450,8 @@ function parseRequestLine(action: string, raw: string): ParsedRequest {
   return { action, path: unwrapDecorations(raw), content: '' };
 }
 
-/** Extract action requests from model output, in document order, bounded. */
+/** Extract action requests from model output, in document order, bounded.
+ *  Both plain and decorated markers are honored, VM_* included. */
 export function parseWorkspaceRequests(content: string, limit = 8): ParsedRequest[] {
   const requests: ParsedRequest[] = [];
   for (const match of content.matchAll(REQUEST_LINE)) {
@@ -461,9 +464,9 @@ export function parseWorkspaceRequests(content: string, limit = 8): ParsedReques
   // because it pretty-printed the marker.
   const seen = new Set(requests.map((r) => `${r.action}:${r.path}`));
   if (requests.length < limit) {
-    for (const match of content.matchAll(/(?:^|\n)[^\n]*?\b(READ|WRITE|DELETE|MKDIR|RUN_WAIT|RUN)[`*_~'"]*[:：][ \t]+([^\n]+)/g)) {
+    for (const match of content.matchAll(/(?:^|\n)[^\n]*?\b(VM_RUN_WAIT|VM_RUN|VM_DELETE|VM_MKDIR|VM_WRITE|VM_READ|VM_LS|READ|WRITE|DELETE|MKDIR|RUN_WAIT|RUN)[`*_~'"]*[:：][ \t]+([^\n]+)/g)) {
       // Decorations are judged outside the keyword itself (RUN_WAIT contains `_`).
-      const decorated = /[`*_~"'«»“”]|\d+\.\s/.test(match[0].replace(/(READ|WRITE|DELETE|MKDIR|RUN_WAIT|RUN)[`*_~'"]*[:：]/i, ''));
+      const decorated = /[`*_~"'«»“”]|\d+\.\s/.test(match[0].replace(/(VM_RUN_WAIT|VM_RUN|VM_DELETE|VM_MKDIR|VM_WRITE|VM_READ|VM_LS|READ|WRITE|DELETE|MKDIR|RUN_WAIT|RUN)[`*_~'"]*[:：]/i, ''));
       if (!decorated) continue; // plain full-line markers are handled above
       const rest = match[2].trim();
       if (!rest) continue;

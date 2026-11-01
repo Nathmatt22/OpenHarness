@@ -5,7 +5,8 @@ const map = {
   sparkles: Sparkles, code: Code, search: Search, check: Check,
   globe: Globe, edit: Pen, shield: Lock, layers: Tasks,
   chart: Tasks, workflow: Tasks, settings: Gears, plus: Add,
-  send: ArrowUp, users: User, chat: TextBubble, stop: Pause
+  send: ArrowUp, users: User, chat: TextBubble, stop: Pause,
+  monitor: Globe
 } as const;
 
 export type IconName = keyof typeof map;

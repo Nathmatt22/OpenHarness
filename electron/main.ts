@@ -1,4 +1,5 @@
-import { app, BrowserWindow, Menu, ipcMain, safeStorage, dialog } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, safeStorage, dialog, session } from 'electron';
+import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { database, initDatabase } from './database';
@@ -9,9 +10,18 @@ import {
   parseWorkspaceRequests, parseFolderFlags, performWorkspaceAction, runApplication, isPolicy,
   type ParsedRequest, type WorkspaceFolders
 } from './workspace';
+import {
+  listMachines, createMachine, unlockMachine, destroyMachine, listMachineFiles, readMachineFile,
+  writeMachineFile, deleteMachineEntry, mkdirMachine, runInMachine, writeDesktopPage,
+  parseMachinePages, realMachinesRoot, machineFolder, type MachineInfo
+} from './vm';
 
 let win: BrowserWindow;
 const controllers = new Map<string, AbortController>();
+/** Machine desktop windows: machine id → window. */
+const machineWindows = new Map<string, BrowserWindow>();
+/** Machine web-browser windows: key `${machineId}:${index}` → window. */
+const machineBrowsers = new Map<string, BrowserWindow>();
 
 const allowed = new Set([
   'app:init', 'settings:get', 'settings:set',
@@ -21,6 +31,7 @@ const allowed = new Set([
   'agent:save', 'agent:delete',
   'team:save', 'team:delete', 'team:pickFolder', 'workspace:list', 'workspace:read',
   'workspace:write', 'workspace:delete', 'workspace:mkdir', 'workspace:run',
+  'vme:create', 'vme:list', 'vme:delete', 'vme:open', 'vme:files',
   'teamchat:create', 'teamchat:list', 'teamchat:messages', 'teamchat:send', 'teamchat:stop',
   'mission:start', 'mission:stop', 'mission:events'
 ]);
@@ -87,6 +98,36 @@ function teamCapabilities(teamId: string): WorkspaceFolders {
   return { folders, writable, allowRun: teamAllowRun(teamId) };
 }
 
+/** The machine row assigned to a team, or null. */
+function teamMachineRow(teamId: string): any {
+  return database().prepare('SELECT * FROM virtual_machines WHERE team_id=?').get(teamId) as any;
+}
+
+/** Machine id assigned to a team (empty string when the team has none). */
+function teamMachineId(teamId: string): string {
+  return teamMachineRow(teamId)?.id || '';
+}
+
+/** Whether the team-level "agents may run commands inside the machine" switch is on. */
+function teamVmAllowRun(teamId: string): boolean {
+  const team = database().prepare('SELECT vm_allow_run FROM teams WHERE id=?').get(teamId) as any;
+  return team?.vm_allow_run === 1;
+}
+
+/** Absolute, symlink-resolved folder of the team machine (creates it if missing). */
+function teamMachineFolder(teamId: string): string {
+  const machineId = teamMachineId(teamId);
+  if (!machineId) fail('Cette équipe n’a pas d’environnement virtuel.');
+  const folder = machineFolder(app.getPath('userData'), machineId);
+  fs.mkdirSync(folder, { recursive: true });
+  return fs.realpathSync.native(folder);
+}
+
+/** One-shot check: whether a team owns a machine at all. */
+function teamHasMachine(teamId: string): boolean {
+  return !!teamMachineId(teamId);
+}
+
 /**
  * Workspace intro for the first message of a team conversation: per-folder
  * capability flags plus the action-marker how-to. Empty when the team has no
@@ -127,6 +168,102 @@ function buildWorkspaceContext(ws: WorkspaceFolders): string {
   return workspaceContext + '\n\nActions disponibles :\n' + capabilities.map((c) => `- ${c}`).join('\n');
 }
 
+/** Serialized page shortcuts shown on the machine desktop. */
+function machinePages(machineId: string): { label: string; url: string }[] {
+  const row = database().prepare('SELECT pages FROM virtual_machines WHERE id=?').get(machineId) as any;
+  try { return row?.pages ? JSON.parse(row.pages) : []; } catch { return []; }
+}
+
+/**
+ * VM intro for the first message of a team conversation: the machine exists and
+ * agents may act inside it with the VM_* marker family. Empty when the team has
+ * no machine assigned.
+ */
+function buildVmContext(teamId: string): string {
+  const machineId = teamMachineId(teamId);
+  if (!machineId) return '';
+  const machine = database().prepare('SELECT name FROM virtual_machines WHERE id=?').get(machineId) as any;
+  const folder = teamMachineFolder(teamId);
+  const pages = machinePages(machineId);
+  try {
+    // Keep the desktop page in sync (shortcuts + machine name).
+    writeDesktopPage(folder, machine?.name || 'Environnement virtuel', pages);
+  } catch { /* a read-only or busy folder must not block the mission */ }
+  let listing = '';
+  try {
+    listing = listMachineFiles(folder).map((e) =>
+      `${e.type === 'folder' ? '[dossier]' : '[fichier]'} ${e.name}`).join(', ') || '(vide)';
+  } catch { listing = '(illisible)'; }
+  const lines = [
+    `Environnement virtuel assigné : « ${machine?.name || 'machine'} » (PC virtuel de l’équipe, propre à cette équipe).`,
+    'Tout ce que tu écris ou exécutes ici reste confiné dans cette machine isolée ; le reste du système est invisible.',
+    `Contenu actuel de la racine : ${listing}.`,
+    'Pour agir dans la machine, écris une ligne complète parmi :',
+    '- "VM_LS: sous/dossier" — liste le contenu (la racine si vide) ;',
+    '- "VM_READ: chemin/relatif.ext" — lit un fichier texte ;',
+    '- "VM_WRITE: chemin/relatif.ext | contenu complet du fichier" — crée ou remplace (512 Ko max, \\n et \\t échappés autorisés) ;',
+    '- "VM_MKDIR: sous/dossier" — crée un dossier ;',
+    '- "VM_DELETE: chemin/relatif" — supprime un fichier ou un dossier vide ;'
+  ];
+  if (teamVmAllowRun(teamId)) {
+    lines.push(
+      '- "VM_RUN: programme argument1 argument2" — lance une commande de la machine sans attendre ;',
+      '- "VM_RUN_WAIT: programme arguments | sous/dossier" — attend la fin et donne le code de sortie (120 s max) ; le segment après | est le dossier de travail.',
+      'Le programme peut être un nom du PATH (node, python…) ou un chemin relatif dans la machine ; les arguments qui pointent hors de la machine sont refusés.'
+    );
+  } else {
+    lines.push('L’exécution de commandes dans la machine est désactivée pour cette équipe : seules les actions fichiers sont disponibles.');
+  }
+  lines.push(
+    'Il n’y a pas de navigateur interactif pilotable par ces marqueurs : pour le web, utilise tes propres connaissances' +
+    (pages.length ? ` et les raccourcis du bureau (${pages.map((p) => p.label).join(', ')})` : '') +
+    '. N’invente jamais une exécution : si tu n’as pas réellement lancé de commande, dis-le.'
+  );
+  return '\n\n' + lines.map((l) => `- ${l}`).join('\n');
+}
+
+/** Parse and dispatch one VM_* action inside the team machine. */
+async function performVmAction(teamId: string, request: ParsedRequest): Promise<string> {
+  const tag = request.tag ? ` [${request.tag}]` : '';
+  try {
+    const folder = teamMachineFolder(teamId);
+    switch (request.action) {
+      case 'VM_LS':
+        return `VM_LS_RESULT${tag} ${request.path || '.'} → ` +
+          listMachineFiles(folder, request.path || '.').map((e) =>
+            `${e.type === 'folder' ? 'dossier' : 'fichier'} ${e.name}${e.size ? ` (${e.size} o)` : ''}`).join(', ');
+      case 'VM_READ':
+        return `VM_FILE_CONTENT${tag} ${request.path}\n${readMachineFile(folder, request.path)}`;
+      case 'VM_WRITE': {
+        const content = request.content.replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+        return `VM_WRITE_RESULT${tag} ${request.path} — ${writeMachineFile(folder, request.path, content)}.`;
+      }
+      case 'VM_MKDIR':
+        return `VM_MKDIR_RESULT${tag} ${request.path} — ${mkdirMachine(folder, request.path)}.`;
+      case 'VM_DELETE':
+        return `VM_DELETE_RESULT${tag} ${request.path} — ${deleteMachineEntry(folder, request.path)}.`;
+      case 'VM_RUN':
+      case 'VM_RUN_WAIT': {
+        if (!teamVmAllowRun(teamId)) {
+          return `VM_RUN_RESULT${tag} refusé — l’exécution de commandes est désactivée pour cette équipe.`;
+        }
+        const result = await runInMachine(folder, request.path, {
+          wait: request.action === 'VM_RUN_WAIT',
+          cwd: request.tag
+        });
+        return `VM_RUN_RESULT${tag} ${result.ok ? '' : 'échec — '}${result.summary}`;
+      }
+      default:
+        return `ACTION_RESULT${tag} action inconnue : ${request.action}.`;
+    }
+  } catch (e) {
+    // Never throw: policy refusals and I/O errors come back as tagged text.
+    const reason = e instanceof Error ? e.message : String(e);
+    const label = request.action === 'VM_READ' ? 'VM_FILE_CONTENT' : `${request.action}_RESULT`;
+    return `${label}${tag} impossible : ${reason}`;
+  }
+}
+
 /** Fallback connection id: the oldest configured connection. */
 function firstConnectionId(): string | undefined {
   return (database().prepare('SELECT id FROM connections ORDER BY created_at LIMIT 1').get() as any)?.id;
@@ -142,7 +279,101 @@ function saveTeamMessage(conversationId: string, role: string, content: string, 
 }
 
 /** Live agent activity states surfaced to the renderer. */
-export type AgentActivity = 'thinking' | 'reading' | 'writing' | 'creating' | 'deleting' | 'running' | 'queued' | 'idle';
+export type AgentActivity = 'thinking' | 'reading' | 'writing' | 'creating' | 'deleting' | 'running' | 'vm' | 'queued' | 'idle';
+
+/** Database rows for every virtual machine environment. */
+function listVmeRows() {
+  const rows = database().prepare('SELECT id,name,team_id,pages,created_at FROM virtual_machines ORDER BY created_at').all() as any[];
+  const root = realMachinesRoot(app.getPath('userData'));
+  return rows.map((row) => {
+    const onDisk = listMachines(app.getPath('userData')).find((m: MachineInfo) => m.id === row.id);
+    return {
+      id: row.id,
+      name: row.name,
+      teamId: row.team_id || null,
+      pages: (() => { try { return row.pages ? JSON.parse(row.pages) : []; } catch { return []; } })(),
+      created_at: row.created_at,
+      // The absolute workspace path is shown read-only in the UI.
+      path: onDisk ? onDisk.folder : path.join(root, row.id),
+      ready: !!onDisk && !onDisk.busy
+    };
+  });
+}
+
+/**
+ * Open (or focus) the desktop window of a machine. The page is served from the
+ * machine workspace through its dedicated persistent session; the window never
+ * navigates away from the local page, so the desktop stays home.
+ */
+function openMachineDesktop(machineId: string): string {
+  const row = database().prepare('SELECT id,name FROM virtual_machines WHERE id=?').get(machineId) as any;
+  if (!row) fail('Environnement virtuel inconnu.');
+  const folder = teamMachineFolder(machineId);
+  const page = writeDesktopPage(folder, row.name || 'Environnement virtuel', machinePages(machineId));
+  const existing = machineWindows.get(machineId);
+  if (existing && !existing.isDestroyed()) {
+    existing.focus();
+    return machineId;
+  }
+  const desktop = new BrowserWindow({
+    width: 1120, height: 720, minWidth: 720, minHeight: 480,
+    title: `OpenHarness — ${row.name || 'Environnement virtuel'}`,
+    backgroundColor: '#0b0d12', autoHideMenuBar: true,
+    webPreferences: {
+      session: session.fromPartition(`persist:vme-${machineId}`),
+      contextIsolation: true, nodeIntegration: false, sandbox: true,
+      preload: path.join(__dirname, 'vmDesktopPreload.js')
+    }
+  });
+  machineWindows.set(machineId, desktop);
+  desktop.on('closed', () => machineWindows.delete(machineId));
+  // The desktop never spawns new windows and never leaves the local page.
+  desktop.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  desktop.webContents.on('will-navigate', (event, url) => {
+    if (!url.startsWith('file:')) event.preventDefault();
+  });
+  void desktop.loadFile(page);
+  return machineId;
+}
+
+/**
+ * Open (or focus) the machine's web browser window: a navigation-capable
+ * Electron window wired to the machine's own session, seeded with the team's
+ * configured start pages. The desktop window stays untouched.
+ */
+function openMachineBrowser(machineId: string, pageIndex?: number): string {
+  const row = database().prepare('SELECT id,name FROM virtual_machines WHERE id=?').get(machineId) as any;
+  if (!row) fail('Environnement virtuel inconnu.');
+  const pages = machinePages(machineId);
+  if (!pages.length) fail('Aucun raccourci web configuré pour cette machine.');
+  const index = typeof pageIndex === 'number' && pageIndex >= 0 && pageIndex < pages.length ? pageIndex : 0;
+  const key = `${machineId}:${index}`;
+  const existing = machineBrowsers.get(key);
+  if (existing && !existing.isDestroyed()) {
+    existing.focus();
+    return key;
+  }
+  const browser = new BrowserWindow({
+    width: 1180, height: 800, minWidth: 640, minHeight: 480,
+    title: `${row.name || 'Machine'} — ${pages[index].label}`,
+    backgroundColor: '#101114', autoHideMenuBar: true,
+    webPreferences: {
+      session: session.fromPartition(`persist:vme-${machineId}`),
+      contextIsolation: true, nodeIntegration: false, sandbox: true
+    }
+  });
+  machineBrowsers.set(key, browser);
+  browser.on('closed', () => machineBrowsers.delete(key));
+  // Only the machine's configured hosts may be loaded in this window.
+  const allowedHosts = new Set(pages.map((p) => { try { return new URL(p.url).hostname; } catch { return ''; } }));
+  browser.webContents.on('will-navigate', (event, url) => {
+    let host = '';
+    try { host = new URL(url).hostname; } catch { /* not a web url */ }
+    if (!allowedHosts.has(host)) event.preventDefault();
+  });
+  void browser.loadURL(pages[index].url);
+  return key;
+}
 
 /** Broadcast what an agent is doing right now (renderer shows a live badge). */
 function setActivity(conversationId: string, activity: AgentActivity, agentId?: string, missionId?: string) {
@@ -151,16 +382,17 @@ function setActivity(conversationId: string, activity: AgentActivity, agentId?: 
 
 /**
  * Run one participant turn: stream the answer (emitting chat:delta), persist
- * it, execute any workspace action markers and feed the tagged results back,
- * then return the final text. Activity events mark thinking/reading/writing/
- * running phases so the interface can show what the agent is doing live.
+ * it, execute any workspace/virtual-machine action markers and feed the tagged
+ * results back, then return the final text. Activity events mark thinking/
+ * reading/writing/running phases so the interface can show what the agent is
+ * doing live.
  */
 async function runAgentTurn(
   conversationId: string,
   instructions: string,
   ws: WorkspaceFolders,
   signal: AbortSignal,
-  opts?: { agentId?: string; maxRounds?: number; missionId?: string }
+  opts?: { agentId?: string; maxRounds?: number; missionId?: string; teamId?: string }
 ): Promise<string> {
   const maxRounds = opts?.maxRounds ?? 3;
   let content = '';
@@ -182,15 +414,23 @@ async function runAgentTurn(
       if (!requests.length || round >= maxRounds) return content;
       const results: string[] = [];
       for (const request of requests) {
+        const isVm = request.action.startsWith('VM');
         const phase: AgentActivity =
-          request.action === 'READ' ? 'reading'
+          isVm ? 'vm'
+          : request.action === 'READ' ? 'reading'
           : request.action === 'WRITE' ? 'writing'
           : request.action === 'MKDIR' ? 'creating'
           : request.action === 'DELETE' ? 'deleting'
           : request.action === 'RUN' || request.action === 'RUN_WAIT' ? 'running'
           : 'thinking';
         setActivity(conversationId, phase, opts?.agentId, opts?.missionId);
-        results.push(await performWorkspaceAction(ws, request, budget));
+        if (isVm && opts?.teamId) {
+          results.push(await performVmAction(opts.teamId, request));
+        } else if (isVm) {
+          results.push(`${request.action}_RESULT${request.tag ? ` [${request.tag}]` : ''} refusé — aucun environnement virtuel n’est rattaché à cette conversation.`);
+        } else {
+          results.push(await performWorkspaceAction(ws, request, budget));
+        }
       }
       saveTeamMessage(conversationId, 'user',
         `Résultats des actions demandées (dossiers assignés) :\n${results.join('\n\n')}\n\n` +
@@ -266,7 +506,8 @@ app.whenReady().then(() => {
     agents: d.prepare('SELECT * FROM agents ORDER BY custom,name').all(),
     connections: d.prepare('SELECT id,name,type,base_url,model,created_at FROM connections ORDER BY created_at').all(),
     conversations: d.prepare('SELECT id,title,agent_id,connection_id,team_id,created_at FROM conversations ORDER BY created_at DESC').all(),
-    teams: d.prepare('SELECT id,name,agent_ids,folders,allow_run,created_at FROM teams ORDER BY created_at DESC').all(),
+    teams: d.prepare('SELECT id,name,agent_ids,folders,allow_run,virtual_machine,vm_allow_run,created_at FROM teams ORDER BY created_at DESC').all(),
+    vmes: listVmeRows(),
     settings: Object.fromEntries(d.prepare('SELECT key,value FROM settings').all().map((r: any) => [r.key, r.value])) as Record<string, string>,
     endpoints: providerEndpoint('claude') && providerEndpoint('openai')
       ? { claude: providerEndpoint('claude'), openai: providerEndpoint('openai') }
@@ -371,17 +612,33 @@ app.whenReady().then(() => {
     const folders = Array.isArray(p.folders)
       ? [...new Set(p.folders.map((f: unknown) => String(f).trim()).filter(Boolean))]
       : [];
-    d.prepare(`INSERT INTO teams(id,name,agent_ids,folders,allow_run,created_at) VALUES(?,?,?,?,?,?)
+    // Optional virtual environment: the id must exist (or be empty).
+    const vmeId = isString(p.virtualMachineId) ? p.virtualMachineId : '';
+    if (vmeId) {
+      const row = d.prepare('SELECT id,team_id FROM virtual_machines WHERE id=?').get(vmeId) as any;
+      if (!row) fail('Environnement virtuel inconnu.');
+      if (row.team_id && row.team_id !== id) fail('Cet environnement virtuel est déjà assigné à une autre équipe.');
+    }
+    d.prepare(`INSERT INTO teams(id,name,agent_ids,folders,allow_run,virtual_machine,vm_allow_run,created_at) VALUES(?,?,?,?,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET name=excluded.name,agent_ids=excluded.agent_ids,
-      folders=excluded.folders,allow_run=excluded.allow_run`)
+      folders=excluded.folders,allow_run=excluded.allow_run,
+      virtual_machine=excluded.virtual_machine,vm_allow_run=excluded.vm_allow_run`)
       .run(id, p.name.trim(), JSON.stringify(p.agentIds), JSON.stringify(folders),
-        p.allowRun ? 1 : 0, new Date().toISOString());
+        p.allowRun ? 1 : 0, vmeId || null, p.vmAllowRun ? 1 : 0, new Date().toISOString());
+    // Bind or unbind the machine to this team.
+    if (vmeId) {
+      d.prepare('UPDATE virtual_machines SET team_id=? WHERE id=?').run(id, vmeId);
+    } else {
+      d.prepare('UPDATE virtual_machines SET team_id=NULL WHERE team_id=?').run(id);
+    }
     return { id };
   });
 
   register('team:delete', (p: any) => {
     d.prepare('DELETE FROM mission_events WHERE mission_id IN (SELECT id FROM missions WHERE team_id=?)').run(p.id);
     d.prepare('DELETE FROM missions WHERE team_id=?').run(p.id);
+    // The machine survives its team: it becomes unassigned, not deleted.
+    d.prepare('UPDATE virtual_machines SET team_id=NULL WHERE team_id=?').run(p.id);
     d.prepare('DELETE FROM teams WHERE id=?').run(p.id);
     return true;
   });
@@ -440,6 +697,45 @@ app.whenReady().then(() => {
     return result.summary;
   });
 
+  /* ────────────────── virtual machine environments ────────────────── */
+
+  register('vme:create', (p: any) => {
+    if (!isString(p?.name) || !p.name.trim() || p.name.length > 80) fail('Le nom de l’environnement est requis (80 caractères max).');
+    const id = randomUUID();
+    createMachine(app.getPath('userData'), id);
+    d.prepare('INSERT INTO virtual_machines(id,name,team_id,pages,created_at) VALUES(?,?,?,?,?)')
+      .run(id, p.name.trim(), null, JSON.stringify(parseMachinePages(p.pages)), new Date().toISOString());
+    const folder = machineFolder(app.getPath('userData'), id);
+    writeDesktopPage(folder, p.name.trim(), parseMachinePages(p.pages));
+    unlockMachine(app.getPath('userData'), id);
+    return { id };
+  });
+
+  register('vme:list', () => listVmeRows());
+
+  register('vme:delete', (p: any) => {
+    const row = d.prepare('SELECT id,team_id FROM virtual_machines WHERE id=?').get(String(p?.id || '')) as any;
+    if (!row) fail('Environnement virtuel inconnu.');
+    if (row.team_id) fail('Détachez d’abord cet environnement de son équipe.');
+    destroyMachine(app.getPath('userData'), row.id); // removes the workspace folder
+    d.prepare('DELETE FROM virtual_machines WHERE id=?').run(row.id);
+    return true;
+  });
+
+  register('vme:open', (p: any) => {
+    const machineId = String(p?.id || '');
+    if (p?.page !== undefined) return openMachineBrowser(machineId, Number(p.page) || 0);
+    return openMachineDesktop(machineId);
+  });
+
+  register('vme:files', (p: any) => {
+    const machineId = String(p?.id || '');
+    const row = d.prepare('SELECT id FROM virtual_machines WHERE id=?').get(machineId) as any;
+    if (!row) fail('Environnement virtuel inconnu.');
+    const relative = isString(p?.relative) && p.relative.trim() ? p.relative : '.';
+    return listMachineFiles(teamMachineFolder(machineId), relative);
+  });
+
   register('teamchat:create', (p: any) => {
     const team = d.prepare('SELECT id,name FROM teams WHERE id=?').get(p?.teamId) as any;
     if (!team) fail('Équipe inconnue.');
@@ -471,12 +767,21 @@ app.whenReady().then(() => {
     const signal = new AbortController();
     controllers.set(p.conversationId, signal);
     const mention = isString(p?.mention) && roster.includes(p.mention) ? p.mention : null;
-    // Workspace intro rides with the very first user message of the conversation.
+    // Workspace and virtual-machine intros ride with the very first user
+    // message of the conversation.
     const fresh = !d.prepare('SELECT id FROM messages WHERE conversation_id=?').get(p.conversationId);
     try {
-      if (fresh && ws.folders.length) {
-        saveTeamMessage(p.conversationId, 'user',
-          `${p.content.trim()}\n${buildWorkspaceContext(ws)}\n\nPour obtenir le contenu d'un fichier ou exécuter une action, utilise les lignes actions décrites ci-dessus dans ta réponse.`);
+      const vmContext = buildVmContext(conversation.team_id);
+      if (fresh) {
+        const intro = [buildWorkspaceContext(ws), vmContext].filter(Boolean).join('');
+        if (intro) {
+          saveTeamMessage(p.conversationId, 'user',
+            `${p.content.trim()}${intro}\n\nPour obtenir le contenu d'un fichier ou exécuter une action, utilise les lignes actions décrites ci-dessus dans ta réponse.`);
+        } else {
+          saveTeamMessage(p.conversationId, 'user',
+            `L'utilisateur écrit à l’équipe : ${p.content.trim()}\n` +
+            `Réponds directement, en une réponse courte et actionnable. Ne répète pas les réponses des autres agents.`);
+        }
       } else {
         saveTeamMessage(p.conversationId, 'user',
           `L'utilisateur écrit à l’équipe : ${p.content.trim()}\n` +
@@ -486,7 +791,8 @@ app.whenReady().then(() => {
       for (const agentId of order) {
         const a = agentRow(agentId);
         if (!a) continue;
-        await runAgentTurn(p.conversationId, a.instructions, ws, signal.signal, { agentId });
+        await runAgentTurn(p.conversationId, a.instructions, ws, signal.signal,
+          { agentId, teamId: teamHasMachine(conversation.team_id) ? conversation.team_id : undefined });
       }
       const answers = d.prepare('SELECT content FROM messages WHERE conversation_id=? AND role=? ORDER BY created_at')
         .all(p.conversationId, 'assistant') as { content: string }[];
@@ -518,14 +824,18 @@ app.whenReady().then(() => {
 
     // Workspace capabilities for this mission: plain folders are readable,
     // entries flagged [WRITABLE] add write support, allow_run gates RUN.
+    // The team's virtual machine (when assigned) adds the VM_* action family.
     const ws = teamCapabilities(p.teamId);
     const workspaceContext = buildWorkspaceContext(ws);
+    const vmContext = buildVmContext(p.teamId);
 
     // Tool loop: the model signals actions with full-line markers (READ/WRITE/
-    // DELETE/MKDIR/RUN/RUN_WAIT), the main process executes them inside the
-    // assigned folders and feeds the tagged results back within the same turn.
+    // DELETE/MKDIR/RUN/RUN_WAIT and the VM_* family), the main process executes
+    // them inside the assigned folders / machine and feeds the tagged results
+    // back within the same turn.
     const runMissionTurn = async (conversationId: string, instructions: string, agentId: string): Promise<string> =>
-      runAgentTurn(conversationId, instructions, ws, controllers.get(id)!.signal, { agentId, missionId: id });
+      runAgentTurn(conversationId, instructions, ws, controllers.get(id)!.signal,
+        { agentId, missionId: id, teamId: teamHasMachine(p.teamId) ? p.teamId : undefined });
 
     let context = `Mission: ${p.task.trim()}`;
     try {
@@ -540,7 +850,9 @@ app.whenReady().then(() => {
           .run(conv, `Mission — ${p.task.slice(0, 40)}`, a.id, null, new Date().toISOString());
         saveMessage(conv, 'user',
           `Mission globale: ${p.task}\n\nContexte et résultats des agents précédents:\n${context}` +
-          (workspaceContext ? `\n${workspaceContext}\n\nPour obtenir le contenu d'un fichier ou exécuter une action, utilise les lignes actions décrites ci-dessus dans ta réponse.` : ''));
+          (workspaceContext || vmContext
+            ? `\n${[workspaceContext, vmContext].filter(Boolean).join('')}\n\nPour obtenir le contenu d'un fichier ou exécuter une action, utilise les lignes actions décrites ci-dessus dans ta réponse.`
+            : ''));
         const result = await runMissionTurn(conv, a.instructions, a.id);
         context += `\n\n${a.name}: ${result}`;
         record(a.id, result);

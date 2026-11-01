@@ -1,6 +1,6 @@
 {
   "name": "openharness",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "private": true,
   "description": "One Platform. Multiple AI Agents.",
   "main": "dist-electron/electron/main.js",
@@ -9,6 +9,9 @@
     "build": "tsc -p tsconfig.electron.json && tsc -b && vite build",
     "build:win": "npm run build && electron-builder --win nsis --publish never",
     "build:linux": "npm run build && electron-builder --linux AppImage --publish never",
+    "android:add": "cap add android",
+    "android:sync": "npm run build && cap sync android",
+    "build:android": "npm run build && cap sync android && cd android && ./gradlew assembleDebug",
     "test": "vitest run --exclude dist-electron/**",
     "typecheck": "tsc -p tsconfig.electron.json && tsc -b --pretty false"
   },
@@ -20,6 +23,9 @@
     "react-native-svg": "file:vendor/react-native-svg-stub"
   },
   "devDependencies": {
+    "@capacitor/android": "^6.2.3",
+    "@capacitor/cli": "^6.2.3",
+    "@capacitor/core": "^6.2.3",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.13.4",
     "@types/react": "^18.3.18",
@@ -36,9 +42,20 @@
   "build": {
     "appId": "io.openharness.desktop",
     "productName": "OpenHarness",
-    "directories": { "output": "release" },
-    "files": ["dist/**", "dist-electron/electron/**", "dist-electron/shared/**", "package.json"],
-    "win": { "target": "nsis", "artifactName": "OpenHarness-Setup.${ext}", "icon": "build/icon/256.png" },
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/electron/**",
+      "dist-electron/shared/**",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "artifactName": "OpenHarness-Setup.${ext}",
+      "icon": "build/icon/256.png"
+    },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
@@ -49,11 +66,21 @@
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
       "deleteAppDataOnUninstall": false,
-      "installerLanguages": ["fr_FR", "en_US"],
+      "installerLanguages": [
+        "fr_FR",
+        "en_US"
+      ],
       "displayLanguageSelector": true,
       "license": "build/license.txt"
     },
-    "linux": { "target": "AppImage", "artifactName": "OpenHarness.${ext}", "category": "Development", "icon": "build/icon/512.png" },
-    "mac": { "target": "dmg" }
+    "linux": {
+      "target": "AppImage",
+      "artifactName": "OpenHarness.${ext}",
+      "category": "Development",
+      "icon": "build/icon/512.png"
+    },
+    "mac": {
+      "target": "dmg"
+    }
   }
 }

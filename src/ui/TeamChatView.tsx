@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { PapIcon } from './icons';
-import { Agent, ChatMessage, Conversation, Team, api } from './types';
+import { Agent, ChatMessage, Conversation, Team, Vme, api } from './types';
 import { parseFolderFlags } from '../../shared/workspace-flags';
 import type { Activity } from './hooks';
 import type { TFunction } from './i18n';
@@ -24,8 +24,8 @@ export function ActivityBadge({ activity, agent, t } : { activity: Activity; age
  * in-flight answers stream in like solo chat (the App-level chat:delta
  * subscription feeds the streaming text for the active conversation).
  */
-export function TeamChatView({ teams, agents, teamConversations, activeId, onActive, onStarted, onSend, onStop, streaming, streamingAgent, busy, activity, error, onClearError, t } : {
-  teams: Team[]; agents: Agent[]; teamConversations: Conversation[];
+export function TeamChatView({ teams, agents, vmes, teamConversations, activeId, onActive, onStarted, onSend, onStop, streaming, streamingAgent, busy, activity, error, onClearError, t } : {
+  teams: Team[]; agents: Agent[]; vmes?: Vme[]; teamConversations: Conversation[];
   activeId: string; onActive: (id: string) => void; onStarted: () => void;
   onSend: (convId: string, content: string, mention: string | null) => Promise<void>;
   onStop: () => void;
@@ -135,6 +135,30 @@ export function TeamChatView({ teams, agents, teamConversations, activeId, onAct
                         <span className="f">{writable.has(f) ? `[${t('set.writableOn')}] ` : ''}{f}</span>
                       </div>
                     ))}
+                  </div>
+                </div>
+              )}
+              {selectedTeam?.virtual_machine && (
+                <div className="workspace-box">
+                  <div className="workspace-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <PapIcon name="monitor" size={12} /> {t('team.vmTitle')}
+                  </div>
+                  <div className="workspace-list">
+                    <div>
+                      <span className="f">
+                        {(vmes || []).find((v) => v.id === selectedTeam.virtual_machine)?.name || '…'}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                      <button
+                        className="btn btn-ghost"
+                        style={{ padding: '5px 10px', fontSize: 12 }}
+                        onClick={() => { const id = selectedTeam.virtual_machine; if (id) void api()('vme:open', { id }); }}
+                      >
+                        <PapIcon name="monitor" size={13} /> {t('team.vmOpen')}
+                      </button>
+                    </div>
+                    <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--text-3)' }}>{t('team.vmHint')}</div>
                   </div>
                 </div>
               )}
