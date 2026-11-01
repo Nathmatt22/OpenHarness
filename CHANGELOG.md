@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1 - Correction de l'ouverture de l'environnement virtuel
+
+- **Corrigé** : les boutons « Ouvrir le bureau virtuel » / « Web » échouaient systématiquement — `vme:open` et `vme:files` cherchaient l'espace de travail en traitant l'identifiant de la *machine* comme celui d'une *équipe* (échec « Cette équipe n'a pas d'environnement virtuel »). La résolution du dossier passe désormais par une résolution directe machine → espace de travail (`machineWorkspace`).
+- Les erreurs d'ouverture sont désormais affichées (vue Équipe et tchat d'équipe) au lieu d'être avalées silencieusement.
+- Test de régression : `vme:open` régénère le bureau et `vme:files` liste l'espace par identifiant machine.
+
 ## 0.4.0 - Environnements virtuels d'équipe (PC virtuel) et build Android
 
 - **Environnements virtuels** : chaque équipe peut se voir assigner un PC virtuel (`Paramètres → Environnements virtuels`) : un espace de travail isolé dans les données protégées de l'application (`userData/vm-environments/<id>`, avec `Desktop/`, `Documents/`, `Downloads/`), un bureau web dédié (`bureau.html`, généré sans ressource externe) ouvert dans une fenêtre Electron séparée, et un navigateur de machine dont la navigation est restreinte aux raccourcis http(s) configurés (session persistante `persist:vme-<id>` par machine).
