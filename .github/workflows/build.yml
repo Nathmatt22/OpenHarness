@@ -30,7 +30,8 @@ jobs:
             command: build:android
             artifact: OpenHarness-Android
             paths: |
-              android/app/build/outputs/apk/debug/*.apk
+              mobile/app/build/outputs/apk/debug/*.apk
+              mobile/app/build/outputs/apk/release/*.apk
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -40,15 +41,14 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      # Android needs a JDK 17 toolchain and the Android SDK (preinstalled on
-      # ubuntu runners, activated through the setup helper).
+      # The native Android edition (mobile/, Kotlin + Compose) needs a JDK 17
+      # toolchain; the Android SDK is preinstalled on ubuntu runners and the
+      # gradle wrapper resolves the rest.
       - if: matrix.artifact == 'OpenHarness-Android'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
-      - if: matrix.artifact == 'OpenHarness-Android'
-        uses: android-actions/setup-android@v3
       - run: npm run ${{ matrix.command }}
       - uses: actions/upload-artifact@v4
         with:

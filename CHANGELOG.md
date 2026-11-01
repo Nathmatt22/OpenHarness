@@ -8,7 +8,7 @@
 - Une machine n'appartient qu'à une équipe (assignation dans la carte Équipes, sélecteur + bascule commandes) ; la suppression d'une équipe détache sa machine (elle survit non assignée) et la suppression d'une machine assignée est refusée. Vue Équipe et tchat d'équipe affichent la machine et permettent d'ouvrir son bureau web.
 - Badge d'activité `vm` (« travaille dans l'environnement virtuel… ») et introduction VM dans missions et tchats d'équipe ; stockage dans une nouvelle table `virtual_machines` + colonnes `teams.virtual_machine`/`teams.vm_allow_run` (migration automatique).
 - Tests : 12 nouveaux tests (`electron/vm.test.ts`) couvrant le provisionnement, le confinement fichiers/commandes, la génération du bureau, le cycle de vie IPC (`vme:create/list/delete/open`) et l'usage réel par une mission (écriture dans la machine, refus de VM_RUN sans bascule, blocage de traversée).
-- **Build Android** : packaging Capacitor de la même interface (`capacitor.config.ts`, `android/`, `npm run build:android`) — APK compagnon de consultation ; les appels fournisseurs restent réservés au bureau (message clair sans pont IPC). La CI produit l'APK (ubuntu, JDK 17 + SDK Android) et le joint à la release GitHub aux côtés des installateurs Windows et Linux.
+- **Build Android** : la CI joint désormais les APKs de l'édition Android native (`mobile/`, Kotlin + Compose, debug + release) à la release GitHub, aux côtés des installateurs Windows et Linux (`npm run build:android`, job `OpenHarness-Android` du workflow de release).
 
 ## 0.1.0 - Initial workspace implementation
 
