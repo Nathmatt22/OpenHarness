@@ -204,6 +204,15 @@ describe('team machine lifecycle (E2E through the IPC surface)', () => {
     expect(row.ready).toBe(true);
     expect(row.pages[0].url).toBe('https://example.org');
 
+    // Opening the desktop regenerates bureau.html and returns the machine id
+    // (regression: this used to look the machine up as a *team* id and fail).
+    await expect(invoke('vme:open', { id: created.id })).resolves.toBe(created.id);
+    expect(fs.existsSync(path.join(folder, 'bureau.html'))).toBe(true);
+
+    // vme:files lists the workspace by machine id as well.
+    const files = await invoke('vme:files', { id: created.id }) as { name: string }[];
+    expect(files.map((f) => f.name)).toEqual(expect.arrayContaining(['README.txt']));
+
     await expect(invoke('vme:delete', { id: created.id })).resolves.toBe(true);
     expect(fs.existsSync(folder)).toBe(false);
   });

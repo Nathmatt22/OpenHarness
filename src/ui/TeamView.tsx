@@ -47,6 +47,11 @@ export function TeamView({ teams, agents, vmes, missionRunning, events, setEvent
 
   const agentName = (id: string) => agents.find((a: any) => a.id === id)?.name ?? t('team.orchestrator');
 
+  /** Open the machine desktop (or its web page) and surface any refusal. */
+  const openVme = async (id: string, page?: number) => {
+    await api()('vme:open', { id, page });
+  };
+
   return (
     <section className="team-view">
       <div className="team-layout">
@@ -102,11 +107,19 @@ export function TeamView({ teams, agents, vmes, missionRunning, events, setEvent
                       <div>{t('set.vmePages').split(' (')[0]} : {teamVme.pages.map((p) => p.label).join(' · ')}</div>
                     )}
                     <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                      <button className="btn btn-ghost" style={{ padding: '5px 10px', fontSize: 12 }} onClick={() => void api()('vme:open', { id: teamVme.id })}>
+                      <button
+                        className="btn btn-ghost"
+                        style={{ padding: '5px 10px', fontSize: 12 }}
+                        onClick={() => { openVme(teamVme.id).catch((e) => setError(String(e instanceof Error ? e.message : e))); }}
+                      >
                         <PapIcon name="monitor" size={13} /> {t('team.vmOpen')}
                       </button>
                       {teamVme.pages.length > 0 && (
-                        <button className="btn btn-ghost" style={{ padding: '5px 10px', fontSize: 12 }} onClick={() => void api()('vme:open', { id: teamVme.id, page: 0 })}>
+                        <button
+                          className="btn btn-ghost"
+                          style={{ padding: '5px 10px', fontSize: 12 }}
+                          onClick={() => { openVme(teamVme.id, 0).catch((e) => setError(String(e instanceof Error ? e.message : e))); }}
+                        >
                           <PapIcon name="globe" size={13} /> {t('team.vmWeb')}
                         </button>
                       )}

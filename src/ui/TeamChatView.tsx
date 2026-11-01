@@ -153,7 +153,7 @@ export function TeamChatView({ teams, agents, vmes, teamConversations, activeId,
                       <button
                         className="btn btn-ghost"
                         style={{ padding: '5px 10px', fontSize: 12 }}
-                        onClick={() => { const id = selectedTeam.virtual_machine; if (id) void api()('vme:open', { id }); }}
+                        onClick={() => { const id = selectedTeam.virtual_machine; if (id) api()('vme:open', { id }).catch((e) => setLocalError(String(e instanceof Error ? e.message : e))); }}
                       >
                         <PapIcon name="monitor" size={13} /> {t('team.vmOpen')}
                       </button>

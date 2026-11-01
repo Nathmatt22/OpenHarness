@@ -118,6 +118,11 @@ function teamVmAllowRun(teamId: string): boolean {
 function teamMachineFolder(teamId: string): string {
   const machineId = teamMachineId(teamId);
   if (!machineId) fail('Cette équipe n’a pas d’environnement virtuel.');
+  return machineWorkspace(machineId);
+}
+
+/** Absolute, symlink-resolved workspace folder of one machine id (creates it if missing). */
+function machineWorkspace(machineId: string): string {
   const folder = machineFolder(app.getPath('userData'), machineId);
   fs.mkdirSync(folder, { recursive: true });
   return fs.realpathSync.native(folder);
@@ -308,7 +313,7 @@ function listVmeRows() {
 function openMachineDesktop(machineId: string): string {
   const row = database().prepare('SELECT id,name FROM virtual_machines WHERE id=?').get(machineId) as any;
   if (!row) fail('Environnement virtuel inconnu.');
-  const folder = teamMachineFolder(machineId);
+  const folder = machineWorkspace(machineId);
   const page = writeDesktopPage(folder, row.name || 'Environnement virtuel', machinePages(machineId));
   const existing = machineWindows.get(machineId);
   if (existing && !existing.isDestroyed()) {
@@ -733,7 +738,7 @@ app.whenReady().then(() => {
     const row = d.prepare('SELECT id FROM virtual_machines WHERE id=?').get(machineId) as any;
     if (!row) fail('Environnement virtuel inconnu.');
     const relative = isString(p?.relative) && p.relative.trim() ? p.relative : '.';
-    return listMachineFiles(teamMachineFolder(machineId), relative);
+    return listMachineFiles(machineWorkspace(machineId), relative);
   });
 
   register('teamchat:create', (p: any) => {
