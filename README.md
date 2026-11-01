@@ -4,6 +4,11 @@
 
 OpenHarness is an Electron desktop application for individual AI-agent conversations and persisted, sequential team missions. Provider calls run in the Electron main process; conversations and mission events are stored locally in SQLite.
 
+The same product is also available as a **native Android app** ([mobile/](mobile/README.md)), built with
+Kotlin and Jetpack Compose. It ships the same agents, providers, streaming chat, sequential team
+missions and read-only assigned folders. `.github/workflows/android.yml` compiles its debug and
+release APKs on every push under `mobile/`.
+
 ## Requirements
 
 - Node.js 20 or later and npm.

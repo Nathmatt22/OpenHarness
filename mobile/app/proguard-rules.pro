@@ -1,0 +1,3 @@
+-keep class io.openharness.mobile.** { *; }
+-dontwarn okhttp3.**
+-dontwarn okio.**
